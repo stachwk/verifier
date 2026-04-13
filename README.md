@@ -151,6 +151,10 @@ Example installation:
 python3.12 -m pip install cryptography pysqlcipher3 cffi
 ```
 
+## License
+
+This project is licensed under the MIT License. See [LICENSE](/media/wojtek/virtdata/home/wojtek/git/verifier/LICENSE) for the full text.
+
 ## Configuration
 
 The `config.ini` file should contain at least:

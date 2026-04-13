@@ -152,6 +152,10 @@ Przykładowa instalacja:
 python3.12 -m pip install cryptography pysqlcipher3 cffi
 ```
 
+## Licencja
+
+Projekt jest udostępniony na licencji MIT. Pełny tekst znajduje się w pliku [LICENSE](/media/wojtek/virtdata/home/wojtek/git/verifier/LICENSE).
+
 ## Konfiguracja projektu
 
 Plik `config.ini` powinien zawierać co najmniej:
