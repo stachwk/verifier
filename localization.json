@@ -1,0 +1,32 @@
+{
+  "en_US": {
+    "authorize_new": "[OK] Added new program '{program_name}' (hash={hash}). Password: {password}",
+    "authorize_update": "[OK] Updated program '{program_name}' (hash={hash}). New password: {password}",
+    "error_no_file": "[ERROR] Cannot read file: {path}",
+    "info_db_created": "[INFO] Database created or verified.",
+    "test_prog_err_no_key": "[ERROR] Key file not found: {filename}",
+    "test_prog_err_hash": "[ERROR] Could not compute the program hash.",
+    "test_prog_err_not_in_db": "[ERROR] This program is not authorized in the database.",
+    "test_prog_err_bad_pass": "[ERROR] The key file content does not match the database record. Authorization failed.",
+    "test_prog_ok_auth": "[OK] The password is correct. Authorization succeeded.",
+    "test_prog_info_new_pass": "[INFO] New password (in the database): {new_pass}",
+    "test_prog_ok_key_updated": "[OK] The key file was regenerated and saved to: {filename}",
+    "test_prog_info_context_pass": "[INFO] Password for context '{context}': {passval}",
+    "test_prog_info_no_context_pass": "[INFO] No password found for context '{context}'"
+  },
+  "pl_PL": {
+    "authorize_new": "[OK] Dodano nowy program '{program_name}' (hash={hash}). Hasło: {password}",
+    "authorize_update": "[OK] Zaktualizowano program '{program_name}' (hash={hash}). Nowe hasło: {password}",
+    "error_no_file": "[BŁĄD] Nie można odczytać pliku: {path}",
+    "info_db_created": "[INFO] Baza danych została utworzona lub zweryfikowana.",
+    "test_prog_err_no_key": "[BŁĄD] Nie znaleziono pliku klucza: {filename}",
+    "test_prog_err_hash": "[BŁĄD] Nie udało się obliczyć hasha programu.",
+    "test_prog_err_not_in_db": "[BŁĄD] Ten program nie jest autoryzowany w bazie danych.",
+    "test_prog_err_bad_pass": "[BŁĄD] Zawartość pliku klucza nie pasuje do rekordu w bazie. Autoryzacja nie powiodła się.",
+    "test_prog_ok_auth": "[OK] Hasło jest poprawne. Autoryzacja zakończona sukcesem.",
+    "test_prog_info_new_pass": "[INFO] Nowe hasło (w bazie): {new_pass}",
+    "test_prog_ok_key_updated": "[OK] Plik klucza został wygenerowany ponownie i zapisany do: {filename}",
+    "test_prog_info_context_pass": "[INFO] Hasło dla kontekstu '{context}': {passval}",
+    "test_prog_info_no_context_pass": "[INFO] Nie znaleziono hasła dla kontekstu '{context}'"
+  }
+}
