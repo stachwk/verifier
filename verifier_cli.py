@@ -113,30 +113,58 @@ def authorize_program(program_name: str, program_path: str, instance_key: str):
     Also create:
       - <program_name>.hash (contains the program hash)
       - <program_name>_<instance_key>.key (contains the ephemeral password)
+
+    For the same (program_name, instance_key), stale rows with old hashes are removed,
+    so only the currently authorized file version remains active.
     """
+    conn = None
     try:
         verifier_instance = Verifier(program_path)
         new_pass = verifier_instance.generate_random_password(12)
         conn, cursor = verifier_instance.get_db_connection()
+        cursor.execute("BEGIN IMMEDIATE")
+
+        # Usuwamy stare wpisy dla tej samej nazwy programu i tej samej instancji,
+        # ale z innym hashem. To zapobiega narastaniu historycznych hashy.
         cursor.execute("""
-            SELECT program_hash FROM programs WHERE program_hash = ? AND instance_key = ?
+            DELETE FROM programs
+            WHERE program_name = ? AND instance_key = ? AND program_hash <> ?
+        """, (program_name, instance_key, verifier_instance.program_hash))
+
+        cursor.execute("""
+            SELECT program_hash
+            FROM programs
+            WHERE program_hash = ? AND instance_key = ?
         """, (verifier_instance.program_hash, instance_key))
         row = cursor.fetchone()
+
         enc_pass = verifier_instance.encrypt_col_value(new_pass)
+
         if row:
             cursor.execute("""
                 UPDATE programs
                 SET program_name = ?, program_password = ?
                 WHERE program_hash = ? AND instance_key = ?
             """, (program_name, enc_pass, verifier_instance.program_hash, instance_key))
-            log_or_print(f"[OK] Updated program '{program_name}' (hash={verifier_instance.program_hash}, instance_key={instance_key}). Password: {new_pass}", "INFO")
+            conn.commit()
+            log_or_print(
+                f"[OK] Updated program '{program_name}' "
+                f"(hash={verifier_instance.program_hash}, instance_key={instance_key}). "
+                f"Password: {new_pass}",
+                "INFO"
+            )
         else:
             cursor.execute("""
                 INSERT INTO programs (program_hash, program_name, program_password, instance_key)
                 VALUES (?, ?, ?, ?)
             """, (verifier_instance.program_hash, program_name, enc_pass, instance_key))
-            log_or_print(f"[OK] Added new program '{program_name}' (hash={verifier_instance.program_hash}, instance_key={instance_key}). Password: {new_pass}", "INFO")
-        verifier_instance.commit_and_close(conn)
+            conn.commit()
+            log_or_print(
+                f"[OK] Added new program '{program_name}' "
+                f"(hash={verifier_instance.program_hash}, instance_key={instance_key}). "
+                f"Password: {new_pass}",
+                "INFO"
+            )
 
         # Save the hash file
         hash_filename = f"{program_name}.hash"
@@ -155,9 +183,21 @@ def authorize_program(program_name: str, program_path: str, instance_key: str):
             log_or_print(f"[INFO] Created key file: {key_filename}", "INFO")
         except Exception as e:
             log_or_print(f"[ERROR] Could not save key file: {e}", "ERROR")
-    except Exception as e:
-        log_or_print(f"[ERROR] Error in authorize_program: {e}", "ERROR")
 
+    except Exception as e:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        log_or_print(f"[ERROR] Error in authorize_program: {e}", "ERROR")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+                
 def list_programs():
     """Display all programs in the database."""
     try:
