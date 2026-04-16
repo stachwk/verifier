@@ -79,16 +79,23 @@ def create_database():
 
         # Migracja: dodaj authorized_at, jesli tabela programs jeszcze nie ma tej kolumny
         cursor.execute("PRAGMA table_info(programs)")
-        program_columns = [row[1] for row in cursor.fetchall()]
-        cursor.execute("""
-            ALTER TABLE programs
-            ADD COLUMN authorized_at TEXT
-        """)
-        cursor.execute("""
-            UPDATE programs
-            SET authorized_at = CURRENT_TIMESTAMP
-            WHERE authorized_at IS NULL
-        """)
+        program_columns = [str(row[1]).lower() for row in cursor.fetchall()]
+
+        if "authorized_at" not in program_columns:
+            try:
+                cursor.execute("""
+                    ALTER TABLE programs
+                    ADD COLUMN authorized_at TEXT
+                """)
+            except Exception as e:
+                if "duplicate column name" not in str(e).lower():
+                    raise
+
+            cursor.execute("""
+                UPDATE programs
+                SET authorized_at = CURRENT_TIMESTAMP
+                WHERE authorized_at IS NULL
+            """)
 
         cursor.execute("PRAGMA table_info(program_credentials)")
         columns = [row[1] for row in cursor.fetchall()]
