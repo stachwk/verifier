@@ -322,7 +322,7 @@ def list_programs(show_passwords: bool = False):
     except Exception as e:
         log_or_print(f"[ERROR] Error listing programs: {e}", "ERROR")
 
-def list_credentials():
+def list_credentials(show_passwords: bool = False):
     """Display all credentials stored in the database."""
     try:
         verifier_instance = Verifier(sys.argv[0])
@@ -334,13 +334,14 @@ def list_credentials():
         verifier_instance.commit_and_close(conn)
         log_or_print("[INFO] Credential list:", "INFO")
         for cred_id, context, subcontext, enc_data in rows:
-            try:
-                dec_data = verifier_instance.decrypt_col_value(enc_data)
-            except Exception as e:
-                dec_data = f"<decrypt error: {e}>"
-            log_or_print(f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: {dec_data}", "INFO")
-    except Exception as e:
-        log_or_print(f"[ERROR] Error fetching credentials: {e}", "ERROR")
+            if show_passwords:
+                try:
+                    dec_data = verifier_instance.decrypt_col_value(enc_data)
+                except Exception as e:
+                    dec_data = f"<decrypt error: {e}>"
+                log_or_print(f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: {dec_data}", "INFO")
+            else:
+                log_or_print(f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: <hidden>", "INFO")
 
 # Interactive versions of the functions:
 def create_credential_cli():
@@ -385,7 +386,7 @@ def link_program_credential_cli():
     except Exception as e:
         log_or_print(f"[ERROR] Error linking credential to program: {e}", "ERROR")
 
-def list_program_credentials_cli():
+def list_program_credentials_cli(show_passwords: bool = False):
     """Interactively display credentials linked to a program."""
     try:
         print("Enter the program path:")
@@ -401,6 +402,10 @@ def list_program_credentials_cli():
             log_or_print(f"[INFO] Program {verifier_instance.program_hash} (instance_key={instance_key}) has linked credentials:", "INFO")
             for cid, ctx, sctx, pwd in creds:
                 log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='{pwd}'", "INFO")
+                if show_passwords:
+                    log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='{pwd}'", "INFO")
+                else:
+                    log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='<hidden>'", "INFO")
         else:
             log_or_print("[INFO] No credentials are linked to this program.", "INFO")
     except Exception as e:
@@ -520,7 +525,7 @@ def link_prog_cred_cmd(program_path: str, instance_key: str, cred_id: str):
     except Exception as e:
         log_or_print(f"[ERROR] Error linking (cmd): {e}", "ERROR")
 
-def list_prog_creds_cmd(program_path: str, instance_key: str):
+def list_prog_creds_cmd(program_path: str, instance_key: str, show_passwords: bool = False):
     """
     Non-interactive display of credentials linked to a program.
     Takes PROGRAM_PATH and INSTANCE_KEY.
@@ -535,8 +540,10 @@ def list_prog_creds_cmd(program_path: str, instance_key: str):
         if creds:
             log_or_print(f"[INFO] Program {verifier_instance.program_hash} (instance_key={instance_key}) has linked credentials:", "INFO")
             for cid, ctx, sctx, pwd in creds:
+            if show_passwords:
                 log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='{pwd}'", "INFO")
-        else:
+            else:
+                log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='<hidden>'", "INFO")        else:
             log_or_print("[INFO] No credentials are linked to this program.", "INFO")
     except Exception as e:
         log_or_print(f"[ERROR] Error listing credentials (cmd): {e}", "ERROR")
@@ -617,8 +624,9 @@ def main():
             create_credential_cli()
         elif args.link_prog_cred:
             link_program_credential_cli()
-        elif args.list_prog_creds:
-            list_program_credentials_cli()
+        elif args.list_prog_creds_cmd:
+            prog_path, inst_key = args.list_prog_creds_cmd
+            list_prog_creds_cmd(prog_path, inst_key, show_passwords=args.show_passwords)        
         elif args.list_cred_progs:
             list_credential_programs_cli()
         elif args.add_pwd:
@@ -631,7 +639,7 @@ def main():
             link_prog_cred_cmd(prog_path, inst_key, cred_id)
         elif args.list_prog_creds_cmd:
             prog_path, inst_key = args.list_prog_creds_cmd
-            list_prog_creds_cmd(prog_path, inst_key)
+            list_prog_creds_cmd(prog_path, inst_key, show_passwords=args.show_passwords)
         elif args.list_cred_progs_cmd:
             (cred_id,) = args.list_cred_progs_cmd
             list_cred_progs_cmd(cred_id)
