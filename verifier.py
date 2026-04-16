@@ -16,10 +16,10 @@ class Verifier:
       - communication with the SQLCipher database,
       - encrypting and decrypting data,
       - program authorization and credential operations.
-      
+
     The log_or_print() helper either prints messages or writes them to a log file,
     depending on the LOG option in config.ini (section [main]).
-    
+
     Note: get_context_password is only available after successful authorization
     via authenticate_and_regenerate.
     """
@@ -117,10 +117,15 @@ class Verifier:
     def get_db_connection(self):
         """Open a connection to the encrypted SQLCipher database."""
         try:
-            conn = sqlite3.connect(self.DB_NAME)
+            conn = sqlite3.connect(self.DB_NAME, timeout=10)
             cursor = conn.cursor()
             cursor.execute(f"PRAGMA key = '{self.db_key}'")
             cursor.execute("PRAGMA foreign_keys = ON")
+            cursor.execute("PRAGMA busy_timeout = 10000")
+            try:
+                cursor.execute("PRAGMA journal_mode = WAL")
+            except Exception:
+                pass
             return conn, cursor
         except Exception as e:
             self.log_or_print(f"Error connecting to database: {e}", "ERROR")
@@ -228,33 +233,71 @@ class Verifier:
     def authenticate_and_regenerate(self, old_pass: str, instance_key: str) -> tuple[bool, str | None]:
         """
         Authorize a program using the old password and instance key.
-        On success, generate a new password, update the database record, and set self.authenticated to True.
+        On success, generate a new password and atomically update the record in one transaction.
 
         If a record exists for the given instance_key but the current file hash does not match
         the stored one, the method raises an exception.
         """
+        conn = None
         try:
-            row = self.get_program(self.program_hash, instance_key)
+            conn, cursor = self.get_db_connection()
+
+            # Bierzemy blokade zapisu od razu, aby uniknac wyscigu miedzy sesjami
+            cursor.execute("BEGIN IMMEDIATE")
+
+            cursor.execute("""
+                SELECT program_hash, program_name, program_password, instance_key
+                FROM programs
+                WHERE program_hash = ? AND instance_key = ?
+            """, (self.program_hash, instance_key))
+            row = cursor.fetchone()
+
             if not row:
-                # Check whether any record exists for this instance_key, ignoring the hash.
-                conn, cursor = self.get_db_connection()
+                # Sprawdzamy, czy instance_key istnieje dla innego hasha
                 cursor.execute("SELECT program_hash FROM programs WHERE instance_key = ?", (instance_key,))
                 any_row = cursor.fetchone()
-                self.commit_and_close(conn)
+                conn.rollback()
                 if any_row is not None:
                     raise Exception("Hash mismatch: the program contents have changed.")
-                else:
-                    raise Exception("This program has not been authorized for this instance yet.")
-            if row[2] != old_pass:
+                raise Exception("This program has not been authorized for this instance yet.")
+
+            current_pass = self.decrypt_col_value(row[2]) if row[2] else None
+            if current_pass != old_pass:
+                conn.rollback()
                 raise Exception("The provided old password is incorrect.")
+
             new_pass = self.generate_random_password(12)
-            self.update_program_password(self.program_hash, instance_key, new_pass)
+            new_enc = self.encrypt_col_value(new_pass)
+
+            # Warunkowy update - tylko jesli rekord nadal ma poprzednia wartosc
+            cursor.execute("""
+                UPDATE programs
+                SET program_password = ?
+                WHERE program_hash = ? AND instance_key = ? AND program_password = ?
+            """, (new_enc, self.program_hash, instance_key, row[2]))
+
+            if cursor.rowcount != 1:
+                conn.rollback()
+                raise Exception("Concurrent update detected. Please retry authentication.")
+
+            conn.commit()
             self.instance_key = instance_key
             self.authenticated = True
             return (True, new_pass)
         except Exception as e:
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
             self.log_or_print(f"Error in authenticate_and_regenerate: {e}", "ERROR")
             raise Exception(f"Error in authenticate_and_regenerate: {e}")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def get_program_credentials(self, program_hash: str, instance_key: str | None = None) -> list[tuple[int, str, str, str]]:
         """Fetch all credentials linked to a program instance."""
