@@ -339,27 +339,6 @@ def list_credentials(show_passwords: bool = False):
                     dec_data = verifier_instance.decrypt_col_value(enc_data)
                 except Exception as e:
                     dec_data = f"<decrypt error: {e}>"
-                log_or_print(f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: {dec_data}", "INFO")
-            else:
-                log_or_print(f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: <hidden>", "INFO")
-
-def list_credentials(show_passwords: bool = False):
-    """Display all credentials stored in the database."""
-    try:
-        verifier_instance = Verifier(sys.argv[0])
-        conn, cursor = verifier_instance.get_db_connection()
-        cursor.execute("""
-            SELECT cred_id, context, subcontext, credential_data FROM credentials
-        """)
-        rows = cursor.fetchall()
-        verifier_instance.commit_and_close(conn)
-        log_or_print("[INFO] Credential list:", "INFO")
-        for cred_id, context, subcontext, enc_data in rows:
-            if show_passwords:
-                try:
-                    dec_data = verifier_instance.decrypt_col_value(enc_data)
-                except Exception as e:
-                    dec_data = f"<decrypt error: {e}>"
                 log_or_print(
                     f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: {dec_data}",
                     "INFO"
@@ -371,7 +350,24 @@ def list_credentials(show_passwords: bool = False):
                 )
     except Exception as e:
         log_or_print(f"[ERROR] Error fetching credentials: {e}", "ERROR")
-        
+
+# Interactive versions of the functions:
+def create_credential_cli():
+    """Interactively create a new credential."""
+    try:
+        print("Enter context (for example 'database'):")
+        context = input("> ").strip()
+        print("Enter subcontext (for example 'read_write' or 'default'):")
+        subctx = input("> ").strip()
+        if not subctx:
+            subctx = "default"
+        pwd = getpass.getpass("Password to store: ")
+        verifier_instance = Verifier(sys.argv[0])
+        cid = verifier_instance.create_credential(context, subctx, pwd)
+        log_or_print(f"[OK] Created credential id={cid}.", "INFO")
+    except Exception as e:
+        log_or_print(f"[ERROR] Error creating credential: {e}", "ERROR")
+
 def link_program_credential_cli():
     """Interactively link a program with a credential."""
     try:
@@ -413,7 +409,6 @@ def list_program_credentials_cli(show_passwords: bool = False):
         if creds:
             log_or_print(f"[INFO] Program {verifier_instance.program_hash} (instance_key={instance_key}) has linked credentials:", "INFO")
             for cid, ctx, sctx, pwd in creds:
-                log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='{pwd}'", "INFO")
                 if show_passwords:
                     log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='{pwd}'", "INFO")
                 else:
@@ -552,10 +547,11 @@ def list_prog_creds_cmd(program_path: str, instance_key: str, show_passwords: bo
         if creds:
             log_or_print(f"[INFO] Program {verifier_instance.program_hash} (instance_key={instance_key}) has linked credentials:", "INFO")
             for cid, ctx, sctx, pwd in creds:
-            if show_passwords:
-                log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='{pwd}'", "INFO")
-            else:
-                log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='<hidden>'", "INFO")        else:
+                if show_passwords:
+                    log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='{pwd}'", "INFO")
+                else:
+                    log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='<hidden>'", "INFO")
+        else:
             log_or_print("[INFO] No credentials are linked to this program.", "INFO")
     except Exception as e:
         log_or_print(f"[ERROR] Error listing credentials (cmd): {e}", "ERROR")
@@ -616,7 +612,7 @@ def main():
         parser.add_argument("--add-pwd-cmd", nargs=5, metavar=("PROGRAM_PATH", "CONTEXT", "SUBCONTEXT", "PASSWORD", "INSTANCE_KEY"),
                             help="Create a new credential and link it to a program (command mode).")
         parser.add_argument("--show-passwords", action="store_true",
-                            help="Show decrypted ephemeral passwords in list commands.")        
+                            help="Show decrypted passwords in list commands.")
         args = parser.parse_args()
 
         if args.create_db:
@@ -625,7 +621,7 @@ def main():
             prog_name, prog_path, inst_key = args.authorize
             authorize_program(prog_name, prog_path, inst_key)
         elif args.list_progs:
-            list_programs(show_passwords=args.show_passwords)   
+            list_programs(show_passwords=args.show_passwords)
         elif args.cleanup_progs:
             prog_name, prog_path, inst_key = args.cleanup_progs
             cleanup_stale_program_hashes(prog_name, prog_path, inst_key, execute=False)
@@ -636,9 +632,8 @@ def main():
             create_credential_cli()
         elif args.link_prog_cred:
             link_program_credential_cli()
-        elif args.list_prog_creds_cmd:
-            prog_path, inst_key = args.list_prog_creds_cmd
-            list_prog_creds_cmd(prog_path, inst_key, show_passwords=args.show_passwords)        
+        elif args.list_prog_creds:
+            list_program_credentials_cli(show_passwords=args.show_passwords)
         elif args.list_cred_progs:
             list_credential_programs_cli()
         elif args.add_pwd:
