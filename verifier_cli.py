@@ -343,23 +343,35 @@ def list_credentials(show_passwords: bool = False):
             else:
                 log_or_print(f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: <hidden>", "INFO")
 
-# Interactive versions of the functions:
-def create_credential_cli():
-    """Interactively create a new credential."""
+def list_credentials(show_passwords: bool = False):
+    """Display all credentials stored in the database."""
     try:
-        print("Enter context (for example 'database'):")
-        context = input("> ").strip()
-        print("Enter subcontext (for example 'read_write' or 'default'):")
-        subctx = input("> ").strip()
-        if not subctx:
-            subctx = "default"
-        pwd = getpass.getpass("Password to store: ")
         verifier_instance = Verifier(sys.argv[0])
-        cid = verifier_instance.create_credential(context, subctx, pwd)
-        log_or_print(f"[OK] Created credential id={cid}.", "INFO")
+        conn, cursor = verifier_instance.get_db_connection()
+        cursor.execute("""
+            SELECT cred_id, context, subcontext, credential_data FROM credentials
+        """)
+        rows = cursor.fetchall()
+        verifier_instance.commit_and_close(conn)
+        log_or_print("[INFO] Credential list:", "INFO")
+        for cred_id, context, subcontext, enc_data in rows:
+            if show_passwords:
+                try:
+                    dec_data = verifier_instance.decrypt_col_value(enc_data)
+                except Exception as e:
+                    dec_data = f"<decrypt error: {e}>"
+                log_or_print(
+                    f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: {dec_data}",
+                    "INFO"
+                )
+            else:
+                log_or_print(
+                    f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: <hidden>",
+                    "INFO"
+                )
     except Exception as e:
-        log_or_print(f"[ERROR] Error creating credential: {e}", "ERROR")
-
+        log_or_print(f"[ERROR] Error fetching credentials: {e}", "ERROR")
+        
 def link_program_credential_cli():
     """Interactively link a program with a credential."""
     try:
