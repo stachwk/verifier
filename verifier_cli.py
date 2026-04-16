@@ -292,7 +292,7 @@ def cleanup_stale_program_hashes(program_name: str, program_path: str, instance_
             except Exception:
                 pass
 
-def list_programs():
+def list_programs(show_passwords: bool = False):
     """Display all programs in the database."""
     try:
         verifier_instance = Verifier(sys.argv[0])
@@ -306,12 +306,19 @@ def list_programs():
         verifier_instance.commit_and_close(conn)
         log_or_print("[INFO] Program list:", "INFO")
         for phash, pname, enc_pass, ikey, authorized_at in rows:
-            dec_pass = verifier_instance.decrypt_col_value(enc_pass) if enc_pass else None
-            log_or_print(
-                f" - {phash} | name='{pname}', instance_key='{ikey}', "
-                f"authorized_at='{authorized_at}', ephemeral_password='{dec_pass}'",
-                "INFO"
-            )
+            if show_passwords:
+                dec_pass = verifier_instance.decrypt_col_value(enc_pass) if enc_pass else None
+                log_or_print(
+                    f" - {phash} | name='{pname}', instance_key='{ikey}', "
+                    f"authorized_at='{authorized_at}', ephemeral_password='{dec_pass}'",
+                    "INFO"
+                )
+            else:
+                log_or_print(
+                    f" - {phash} | name='{pname}', instance_key='{ikey}', "
+                    f"authorized_at='{authorized_at}'",
+                    "INFO"
+                )
     except Exception as e:
         log_or_print(f"[ERROR] Error listing programs: {e}", "ERROR")
 
@@ -589,6 +596,8 @@ def main():
                             help="Show programs for a given cred_id (command mode).")
         parser.add_argument("--add-pwd-cmd", nargs=5, metavar=("PROGRAM_PATH", "CONTEXT", "SUBCONTEXT", "PASSWORD", "INSTANCE_KEY"),
                             help="Create a new credential and link it to a program (command mode).")
+        parser.add_argument("--show-passwords", action="store_true",
+                            help="Show decrypted ephemeral passwords in list commands.")        
         args = parser.parse_args()
 
         if args.create_db:
@@ -597,7 +606,7 @@ def main():
             prog_name, prog_path, inst_key = args.authorize
             authorize_program(prog_name, prog_path, inst_key)
         elif args.list_progs:
-            list_programs()
+            list_programs(show_passwords=args.show_passwords)   
         elif args.cleanup_progs:
             prog_name, prog_path, inst_key = args.cleanup_progs
             cleanup_stale_program_hashes(prog_name, prog_path, inst_key, execute=False)
