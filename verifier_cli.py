@@ -197,7 +197,7 @@ def authorize_program(program_name: str, program_path: str, instance_key: str):
                 conn.close()
             except Exception:
                 pass
-                
+
 def list_programs():
     """Display all programs in the database."""
     try:
@@ -495,6 +495,76 @@ def add_pwd_interactive():
     except Exception as e:
         log_or_print(f"[ERROR] Error in interactive add_pwd: {e}", "ERROR")
 
+def cleanup_stale_program_hashes(program_name: str, program_path: str, instance_key: str, execute: bool = False):
+    """
+    Show and optionally remove stale program hashes for the same (program_name, instance_key).
+    The current hash is computed from program_path and is always preserved.
+    """
+    conn = None
+    try:
+        verifier_instance = Verifier(program_path)
+        current_hash = verifier_instance.program_hash
+        conn, cursor = verifier_instance.get_db_connection()
+        cursor.execute("BEGIN IMMEDIATE")
+
+        cursor.execute("""
+            SELECT program_hash, program_name, instance_key
+            FROM programs
+            WHERE program_name = ? AND instance_key = ?
+            ORDER BY program_hash
+        """, (program_name, instance_key))
+        rows = cursor.fetchall()
+
+        log_or_print("=== ZNALEZIONE WPISY ===", "INFO")
+        if not rows:
+            conn.rollback()
+            log_or_print("[INFO] Brak wpisow do analizy.", "INFO")
+            return
+
+        stale_hashes = []
+        for program_hash, found_program_name, found_instance_key in rows:
+            marker = "KEEP" if program_hash == current_hash else "DROP"
+            if program_hash != current_hash:
+                stale_hashes.append(program_hash)
+            log_or_print(
+                f"{marker} hash={program_hash} program_name={found_program_name} instance_key={found_instance_key}",
+                "INFO"
+            )
+
+        log_or_print("=== PODSUMOWANIE ===", "INFO")
+        log_or_print(f"aktualny_hash : {current_hash}", "INFO")
+        log_or_print(f"liczba_wpisow : {len(rows)}", "INFO")
+        log_or_print(f"do_usuniecia  : {len(stale_hashes)}", "INFO")
+        log_or_print(f"tryb         : {'EXECUTE' if execute else 'DRY-RUN'}", "INFO")
+
+        if not execute:
+            conn.rollback()
+            log_or_print("[INFO] To byl dry-run. Dodaj --cleanup-progs-exec, aby wykonac usuwanie.", "INFO")
+            return
+
+        cursor.execute("""
+            DELETE FROM programs
+            WHERE program_name = ? AND instance_key = ? AND program_hash <> ?
+        """, (program_name, instance_key, current_hash))
+        deleted = cursor.rowcount
+        conn.commit()
+
+        log_or_print("[OK] Usuwanie wykonane.", "INFO")
+        log_or_print(f"[INFO] Usuniete wpisy: {deleted}", "INFO")
+    except Exception as e:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        log_or_print(f"[ERROR] Error in cleanup_stale_program_hashes: {e}", "ERROR")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 def main():
     try:
         parser = argparse.ArgumentParser(
@@ -521,6 +591,11 @@ def main():
                             help="Show programs for a given cred_id (command mode).")
         parser.add_argument("--add-pwd-cmd", nargs=5, metavar=("PROGRAM_PATH", "CONTEXT", "SUBCONTEXT", "PASSWORD", "INSTANCE_KEY"),
                             help="Create a new credential and link it to a program (command mode).")
+        parser.add_argument("--cleanup-progs", nargs=3, metavar=("PROGRAM_NAME", "PROGRAM_PATH", "INSTANCE_KEY"),
+                    help="Dry-run cleanup of stale hashes for a program and instance.")
+        parser.add_argument("--cleanup-progs-exec", nargs=3, metavar=("PROGRAM_NAME", "PROGRAM_PATH", "INSTANCE_KEY"),
+                    help="Execute cleanup of stale hashes for a program and instance.")
+        
         args = parser.parse_args()
 
         if args.create_db:
@@ -555,6 +630,12 @@ def main():
         elif args.add_pwd_cmd:
             prog_path, context, subctx, pwd, inst_key = args.add_pwd_cmd
             add_pwd_cmd(prog_path, context, subctx, pwd, inst_key)
+        elif args.cleanup_progs:
+            prog_name, prog_path, inst_key = args.cleanup_progs
+            cleanup_stale_program_hashes(prog_name, prog_path, inst_key, execute=False)
+        elif args.cleanup_progs_exec:
+            prog_name, prog_path, inst_key = args.cleanup_progs_exec
+            cleanup_stale_program_hashes(prog_name, prog_path, inst_key, execute=True)
         else:
             parser.print_help()
     except Exception as e:
