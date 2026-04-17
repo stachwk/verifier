@@ -59,7 +59,7 @@ def main():
     )
     parser.add_argument("--python-bin", default="python3.12", help="Interpreter Pythona")
     parser.add_argument("--cli-path", default="./verifier_cli.py", help="Sciezka do verifier_cli.py")
-    parser.add_argument("--program-path", default="./test_program.py", help="Sciezka do testowego programu")
+    parser.add_argument("--program-path", default="./test/unit/test_program.py", help="Sciezka do test/unit/test_program.py")
     parser.add_argument("--repo-dir", default=".", help="Katalog roboczy repo")
     parser.add_argument("--verbose", type=int, default=0, help="1 = dodatkowe logi")
     args = parser.parse_args()
@@ -95,14 +95,14 @@ def main():
     if proc_auth.returncode != 0:
         raise SystemExit(f"[ERROR] --authorize nie powiodlo sie:\n{proc_auth.stdout}\n{proc_auth.stderr}")
 
-    session_match = re.search(r"\[SESSION\] session_password=([^\s]+)", proc_auth.stdout)
+    session_match = re.search(r"\[SESSION\] session_key=([^\s]+)", proc_auth.stdout)
     if not session_match:
-        raise AssertionError("Po --authorize powinno byc widoczne haslo sesji administratora")
-    session_password = session_match.group(1)
+        raise AssertionError("Po --authorize powinien byc widoczny klucz sesji administratora")
+    session_key = session_match.group(1)
     assert_contains(
         proc_auth.stdout,
-        session_password,
-        "Haslo sesji nie zostalo wypisane w odpowiedzi --authorize"
+        session_key,
+        "Klucz sesji nie zostal wypisany w odpowiedzi --authorize"
     )
 
     # Krok 2: dodanie credentiala i powiazanie z programem
@@ -131,27 +131,19 @@ def main():
     assert_not_contains(
         proc_list_hidden.stdout,
         "ephemeral_password=",
-        "Haslo nie powinno byc widoczne w --list-progs bez --show-passwords"
+        "Klucz sesji nie powinien byc widoczny w --list-progs"
     )
 
-    # Krok 4: list-progs z haslami
+    # Krok 4: list-progs nadal nie ujawnia plaintextu
     proc_list_show = run_cmd(
-        [python_bin, cli_path, "--list-progs", "--show-passwords"],
+        [python_bin, cli_path, "--list-progs"],
         cwd=repo_dir,
         verbose=args.verbose
     )
-    if proc_list_show.returncode != 0:
-        raise SystemExit(f"[ERROR] --list-progs --show-passwords nie powiodlo sie:\n{proc_list_show.stdout}\n{proc_list_show.stderr}")
-
-    assert_contains(
-        proc_list_show.stdout,
-        f"name='{program_name}', instance_key='{instance_key}'",
-        "Brak testowego programu w --list-progs --show-passwords"
-    )
-    assert_contains(
+    assert_not_contains(
         proc_list_show.stdout,
         "ephemeral_password=",
-        "Haslo powinno byc widoczne w --list-progs --show-passwords"
+        "Klucz sesji nie powinien byc widoczny w --list-progs"
     )
 
     # Krok 5: list-prog-creds-cmd bez hasel
@@ -166,35 +158,39 @@ def main():
     assert_contains(
         proc_creds_hidden.stdout,
         f"context='{context}', subcontext='{subcontext}', pass='<hidden>'",
-        "Credential powinien byc ukryty w --list-prog-creds-cmd bez --show-passwords"
+        "Credential powinien byc ukryty w --list-prog-creds-cmd"
     )
     assert_not_contains(
         proc_creds_hidden.stdout,
         secret_password,
-        "Jawne haslo nie powinno byc widoczne bez --show-passwords"
+        "Jawny sekret nie powinien byc widoczny"
     )
 
-    # Krok 6: list-prog-creds-cmd z haslami
+    # Krok 6: list-prog-creds-cmd nadal nie ujawnia plaintextu
     proc_creds_show = run_cmd(
-        [python_bin, cli_path, "--list-prog-creds-cmd", program_path, instance_key, "--show-passwords"],
+        [python_bin, cli_path, "--list-prog-creds-cmd", program_path, instance_key],
         cwd=repo_dir,
         verbose=args.verbose
     )
     if proc_creds_show.returncode != 0:
-        raise SystemExit(f"[ERROR] --list-prog-creds-cmd --show-passwords nie powiodlo sie:\n{proc_creds_show.stdout}\n{proc_creds_show.stderr}")
+        raise SystemExit(f"[ERROR] --list-prog-creds-cmd nie powiodlo sie:\n{proc_creds_show.stdout}\n{proc_creds_show.stderr}")
 
     assert_contains(
         proc_creds_show.stdout,
-        f"context='{context}', subcontext='{subcontext}', pass='{secret_password}'",
-        "Credential powinien byc widoczny po --show-passwords"
+        f"context='{context}', subcontext='{subcontext}', pass='<hidden>'",
+        "Credential powinien pozostac ukryty w --list-prog-creds-cmd"
+    )
+    assert_not_contains(
+        proc_creds_show.stdout,
+        secret_password,
+        "Plaintext credential nie powinien byc widoczny w CLI"
     )
 
     print("")
     print("=== PODSUMOWANIE ===")
     print("[OK] --list-progs ukrywa hasla domyslnie")
-    print("[OK] --list-progs --show-passwords pokazuje hasla")
     print("[OK] --list-prog-creds-cmd ukrywa hasla domyslnie")
-    print("[OK] --list-prog-creds-cmd --show-passwords pokazuje hasla")
+    print("[OK] --list-prog-creds-cmd nie ujawnia plaintextu")
     print("[OK] Test zakonczony powodzeniem")
 
 

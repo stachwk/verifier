@@ -1,5 +1,5 @@
 created_at=20260417_155017
-config_file=./config.ini
+config_file=./verifier_cfg.ini
 config_dir=/home/wojtek/git/verifier
 db_file=/home/wojtek/git/verifier/db/verifier.db
 db_key_file=/home/wojtek/git/verifier/db/verifier-db_key.key

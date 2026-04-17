@@ -58,12 +58,12 @@ def worker(proc_no: int, instance_key: str, python_bin: str, program_path: str, 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Prosty test wspolbieznosci dla verifier/test_program.py"
+        description="Prosty test wspolbieznosci dla verifier/test/unit/test_program.py"
     )
     parser.add_argument("--instance-key", required=True, help="Instance key do testu")
     parser.add_argument("--workers", type=int, default=20, help="Liczba procesow")
     parser.add_argument("--python-bin", default=sys.executable, help="Interpreter Python")
-    parser.add_argument("--program-path", default="./test_program.py", help="Sciezka do test_program.py")
+    parser.add_argument("--program-path", default="./test/unit/test_program.py", help="Sciezka do test/unit/test_program.py")
     parser.add_argument("--verbose", type=int, default=0, help="1 = wiecej logow na stderr")
     args = parser.parse_args()
 
@@ -127,7 +127,7 @@ def main():
             locked_count += 1
         if "concurrent update detected" in text_all:
             concurrent_count += 1
-        if "old password is incorrect" in text_all:
+        if "old session key is incorrect" in text_all:
             wrong_old_pass_count += 1
 
         print(
@@ -143,7 +143,7 @@ def main():
     print(f"bledy                      : {err_count}")
     print(f"wykryte 'database is locked': {locked_count}")
     print(f"wykryte 'concurrent update': {concurrent_count}")
-    print(f"wykryte 'old password is incorrect': {wrong_old_pass_count}")
+    print(f"wykryte 'old session key is incorrect': {wrong_old_pass_count}")
 
     # Heurystyka oceny
     print("")

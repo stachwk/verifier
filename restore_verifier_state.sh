@@ -2,16 +2,16 @@
 set -euo pipefail
 
 # Skrypt odtwarza caly spojny zestaw runtime dla Verifier.
-# Sciezki docelowe sa czytane z config.ini przekazanego jako parametr.
+# Sciezki docelowe sa czytane z verifier_cfg.ini obok skryptu.
 #
 # Uzycie:
-#   ./restore_verifier_state_from_config.sh /sciezka/do/config.ini /sciezka/do/katalogu_backupu
+#   ./restore_verifier_state.sh /sciezka/do/katalogu_backupu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-CONFIG_FILE="${1:-}"
-BACKUP_DIR="${2:-}"
+BACKUP_DIR="${1:-}"
+CONFIG_FILE="$SCRIPT_DIR/verifier_cfg.ini"
 
 log() {
     printf '%s\n' "$*"
@@ -27,8 +27,7 @@ check_file_exists() {
     [ -f "$f" ] || die "Brak pliku: $f"
 }
 
-[ -n "$CONFIG_FILE" ] || die "Podaj sciezke do config.ini jako pierwszy argument"
-[ -f "$CONFIG_FILE" ] || die "Nie istnieje plik config.ini: $CONFIG_FILE"
+[ -f "$CONFIG_FILE" ] || die "Nie istnieje plik verifier_cfg.ini: $CONFIG_FILE"
 
 [ -n "$BACKUP_DIR" ] || die "Podaj katalog backupu jako drugi argument"
 [ -d "$BACKUP_DIR" ] || die "Katalog backupu nie istnieje: $BACKUP_DIR"
@@ -47,10 +46,10 @@ key = sys.argv[2]
 cfg = configparser.ConfigParser()
 read_ok = cfg.read(config_file)
 if not read_ok:
-    raise SystemExit(f"Nie mozna odczytac config.ini: {config_file}")
+    raise SystemExit(f"Nie mozna odczytac verifier_cfg.ini: {config_file}")
 
 if "paths" not in cfg:
-    raise SystemExit("Brak sekcji [paths] w config.ini")
+    raise SystemExit("Brak sekcji [paths] w verifier_cfg.ini")
 
 if key not in cfg["paths"]:
     raise SystemExit(f"Brak klucza {key} w sekcji [paths]")
@@ -108,7 +107,7 @@ chmod 600 "$DB_KEY_FILE"
 chmod 600 "$SECRET_KEY_FILE"
 
 log "[OK] Restore wykonany."
-log "[INFO] config.ini : $CONFIG_FILE"
+log "[INFO] verifier_cfg.ini : $CONFIG_FILE"
 log "[INFO] Zrodlo restore : $BACKUP_DIR"
 log "[INFO] DB         : $DB_FILE"
 log "[INFO] DB key     : $DB_KEY_FILE"

@@ -65,7 +65,7 @@ def main():
     )
     parser.add_argument("--python-bin", default="python3.12", help="Interpreter Pythona")
     parser.add_argument("--cli-path", default="./verifier_cli.py", help="Sciezka do verifier_cli.py")
-    parser.add_argument("--program-path", default="./test_program.py", help="Sciezka do testowego programu")
+    parser.add_argument("--program-path", default="./test/unit/test_program.py", help="Sciezka do test/unit/test_program.py")
     parser.add_argument("--repo-dir", default=".", help="Katalog roboczy repo")
     parser.add_argument("--verbose", type=int, default=0, help="1 = dodatkowe logi")
     args = parser.parse_args()

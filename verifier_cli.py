@@ -9,20 +9,29 @@ import logging
 from verifier import Verifier
 import os
 
+CLI_CONFIG_FILE = "verifier_cfg.ini"
+
+def set_cli_config_file(config_file: str):
+    global CLI_CONFIG_FILE
+    CLI_CONFIG_FILE = config_file
+
+def make_verifier(program_path: str, config_file: str | None = None) -> Verifier:
+    return Verifier(program_path, config_file=config_file or CLI_CONFIG_FILE)
+
 # Helper function for logging or printing messages
 def log_or_print(message: str, level: str = "INFO"):
     config = configparser.ConfigParser()
-    config.read("config.ini")
+    config.read(CLI_CONFIG_FILE)
+    lvl = level.upper()
     if config.has_option("main", "LOG") and config.get("main", "LOG") == "1":
         logger = logging.getLogger("CLI_Logger")
-        logger.setLevel(logging.ERROR)
+        logger.setLevel(logging.INFO)
         if not logger.handlers:
             fh = logging.FileHandler("verifier_cli.log")
-            fh.setLevel(logging.ERROR)
+            fh.setLevel(logging.INFO)
             formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
             fh.setFormatter(formatter)
             logger.addHandler(fh)
-        lvl = level.upper()
         if lvl == "INFO":
             logger.info(message)
         elif lvl == "WARNING":
@@ -31,8 +40,7 @@ def log_or_print(message: str, level: str = "INFO"):
             logger.error(message)
         else:
             logger.info(message)
-    else:
-        print(message)
+    print(message)
 
 def create_database():
     """
@@ -44,7 +52,7 @@ def create_database():
     If the programs table already exists without authorized_at, add that column.
     """
     try:
-        verifier_instance = Verifier(sys.argv[0])
+        verifier_instance = make_verifier(sys.argv[0])
         conn, cursor = verifier_instance.get_db_connection()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS programs (
@@ -133,17 +141,16 @@ def create_database():
 
 def authorize_program(program_name: str, program_path: str, instance_key: str):
     """
-    Add or update a program in the database and generate an ephemeral password.
+    Add or update a program in the database and generate a session key.
     Also create:
-      - <program_name>.hash (contains the program hash)
-      - <program_name>_<instance_key>.key (contains the ephemeral password)
+      - <program_name>_<instance_key>.key (contains the session key)
 
     For the same (program_name, instance_key), stale rows with old hashes are removed,
     so only the currently authorized file version remains active.
     """
     conn = None
     try:
-        verifier_instance = Verifier(program_path)
+        verifier_instance = make_verifier(program_path)
         if not verifier_instance.verify_tls_pair_if_present():
             raise Exception(
                 "Administrator identity is required to add a program. "
@@ -179,7 +186,7 @@ def authorize_program(program_name: str, program_path: str, instance_key: str):
             log_or_print(
                 f"[OK] Updated program '{program_name}' "
                 f"(hash={verifier_instance.program_hash}, instance_key={instance_key}). "
-                f"Password: {new_pass}",
+                f"Session key: {new_pass}",
                 "INFO"
             )
         else:
@@ -191,24 +198,17 @@ def authorize_program(program_name: str, program_path: str, instance_key: str):
             log_or_print(
                 f"[OK] Added new program '{program_name}' "
                 f"(hash={verifier_instance.program_hash}, instance_key={instance_key}). "
-                f"Password: {new_pass}",
+                f"Session key: {new_pass}",
                 "INFO"
             )
 
-        # Save the hash file
-        hash_filename = f"{program_name}.hash"
-        try:
-            with open(hash_filename, "w") as f:
-                f.write(verifier_instance.program_hash + "\n")
-            log_or_print(f"[INFO] Created hash file: {hash_filename}", "INFO")
-        except Exception as e:
-            log_or_print(f"[ERROR] Could not save hash file: {e}", "ERROR")
-
-        # Save the key file
-        key_filename = f"{program_name}_{instance_key}.key"
+        # Save the key file next to the authorized program.
+        program_dir = os.path.dirname(os.path.abspath(program_path))
+        key_filename = os.path.join(program_dir, f"{program_name}_{instance_key}.key")
         try:
             with open(key_filename, "w") as f:
                 f.write(new_pass + "\n")
+            os.chmod(key_filename, 0o600)
             log_or_print(f"[INFO] Created key file: {key_filename}", "INFO")
         except Exception as e:
             log_or_print(f"[ERROR] Could not save key file: {e}", "ERROR")
@@ -236,7 +236,7 @@ def cleanup_stale_program_hashes(program_name: str, program_path: str, instance_
     """
     conn = None
     try:
-        verifier_instance = Verifier(program_path)
+        verifier_instance = make_verifier(program_path)
         verifier_instance.require_tls_pair_for_sensitive_operation("cleanup_stale_program_hashes")
         current_hash = verifier_instance.program_hash
         conn, cursor = verifier_instance.get_db_connection()
@@ -300,10 +300,10 @@ def cleanup_stale_program_hashes(program_name: str, program_path: str, instance_
             except Exception:
                 pass
 
-def list_programs(show_passwords: bool = False):
+def list_programs():
     """Display all programs in the database."""
     try:
-        verifier_instance = Verifier(sys.argv[0])
+        verifier_instance = make_verifier(sys.argv[0])
         conn, cursor = verifier_instance.get_db_connection()
         cursor.execute("""
             SELECT program_hash, program_name, program_password, instance_key, authorized_at
@@ -313,29 +313,19 @@ def list_programs(show_passwords: bool = False):
         rows = cursor.fetchall()
         verifier_instance.commit_and_close(conn)
         log_or_print("[INFO] Program list:", "INFO")
-        if show_passwords:
-            verifier_instance.require_tls_pair_for_sensitive_operation("list_programs_show_passwords")
         for phash, pname, enc_pass, ikey, authorized_at in rows:
-            if show_passwords:
-                dec_pass = verifier_instance.decrypt_col_value(enc_pass) if enc_pass else None
-                log_or_print(
-                    f" - {phash} | name='{pname}', instance_key='{ikey}', "
-                    f"authorized_at='{authorized_at}', ephemeral_password='{dec_pass}'",
-                    "INFO"
-                )
-            else:
-                log_or_print(
-                    f" - {phash} | name='{pname}', instance_key='{ikey}', "
-                    f"authorized_at='{authorized_at}'",
-                    "INFO"
-                )
+            log_or_print(
+                f" - {phash} | name='{pname}', instance_key='{ikey}', "
+                f"authorized_at='{authorized_at}'",
+                "INFO"
+            )
     except Exception as e:
         log_or_print(f"[ERROR] Error listing programs: {e}", "ERROR")
 
-def list_credentials(show_passwords: bool = False):
+def list_credentials():
     """Display all credentials stored in the database."""
     try:
-        verifier_instance = Verifier(sys.argv[0])
+        verifier_instance = make_verifier(sys.argv[0])
         conn, cursor = verifier_instance.get_db_connection()
         cursor.execute("""
             SELECT cred_id, context, subcontext, credential_data FROM credentials
@@ -343,23 +333,11 @@ def list_credentials(show_passwords: bool = False):
         rows = cursor.fetchall()
         verifier_instance.commit_and_close(conn)
         log_or_print("[INFO] Credential list:", "INFO")
-        if show_passwords:
-            verifier_instance.require_tls_pair_for_sensitive_operation("list_credentials_show_passwords")
         for cred_id, context, subcontext, enc_data in rows:
-            if show_passwords:
-                try:
-                    dec_data = verifier_instance.decrypt_col_value(enc_data)
-                except Exception as e:
-                    dec_data = f"<decrypt error: {e}>"
-                log_or_print(
-                    f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: {dec_data}",
-                    "INFO"
-                )
-            else:
-                log_or_print(
-                    f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: <hidden>",
-                    "INFO"
-                )
+            log_or_print(
+                f" - cred_id: {cred_id}, context: {context}, subcontext: {subcontext}, data: <hidden>",
+                "INFO"
+            )
     except Exception as e:
         log_or_print(f"[ERROR] Error fetching credentials: {e}", "ERROR")
 
@@ -373,8 +351,8 @@ def create_credential_cli():
         subctx = input("> ").strip()
         if not subctx:
             subctx = "default"
-        pwd = getpass.getpass("Password to store: ")
-        verifier_instance = Verifier(sys.argv[0])
+        pwd = getpass.getpass("Credential password to store: ")
+        verifier_instance = make_verifier(sys.argv[0])
         cid = verifier_instance.create_credential(context, subctx, pwd)
         log_or_print(f"[OK] Created credential id={cid}.", "INFO")
     except Exception as e:
@@ -385,7 +363,7 @@ def link_program_credential_cli():
     try:
         print("Enter the program path:")
         prog_path = input("> ").strip()
-        verifier_instance = Verifier(prog_path)
+        verifier_instance = make_verifier(prog_path)
         instance_key = input("Enter instance_key: ").strip()
         row = verifier_instance.get_program(verifier_instance.program_hash, instance_key)
         if not row:
@@ -406,12 +384,12 @@ def link_program_credential_cli():
     except Exception as e:
         log_or_print(f"[ERROR] Error linking credential to program: {e}", "ERROR")
 
-def list_program_credentials_cli(show_passwords: bool = False):
+def list_program_credentials_cli():
     """Interactively display credentials linked to a program."""
     try:
         print("Enter the program path:")
         prog_path = input("> ").strip()
-        verifier_instance = Verifier(prog_path)
+        verifier_instance = make_verifier(prog_path)
         instance_key = input("Enter instance_key: ").strip()
         row = verifier_instance.get_program(verifier_instance.program_hash, instance_key)
         if not row:
@@ -421,10 +399,7 @@ def list_program_credentials_cli(show_passwords: bool = False):
         if creds:
             log_or_print(f"[INFO] Program {verifier_instance.program_hash} (instance_key={instance_key}) has linked credentials:", "INFO")
             for cid, ctx, sctx, pwd in creds:
-                if show_passwords:
-                    log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='{pwd}'", "INFO")
-                else:
-                    log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='<hidden>'", "INFO")
+                log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='<hidden>'", "INFO")
         else:
             log_or_print("[INFO] No credentials are linked to this program.", "INFO")
     except Exception as e:
@@ -439,7 +414,7 @@ def list_credential_programs_cli():
             log_or_print("[ERROR] Invalid cred_id.", "ERROR")
             return
         cid = int(cid_str)
-        verifier_instance = Verifier(sys.argv[0])
+        verifier_instance = make_verifier(sys.argv[0])
         c_row = verifier_instance.get_credential(cid)
         if not c_row:
             log_or_print("[ERROR] No such credential exists in the database.", "ERROR")
@@ -459,7 +434,7 @@ def add_pwd_cmd(program_path: str, context: str, subcontext: str, password: str,
     Non-interactive version: create a new credential for the given context/subcontext and link it to a program.
     """
     try:
-        verifier_instance = Verifier(program_path)
+        verifier_instance = make_verifier(program_path)
         row = verifier_instance.get_program(verifier_instance.program_hash, instance_key)
         if not row:
             log_or_print(f"[ERROR] Program (hash={verifier_instance.program_hash}) is not in the database. Run --authorize first.", "ERROR")
@@ -490,11 +465,11 @@ def add_pwd_interactive():
         subctx = input("> ").strip()
         if not subctx:
             subctx = "default"
-        password = getpass.getpass("Enter the password to store: ")
+        password = getpass.getpass("Enter the credential password to store: ")
         print("Enter instance_key:")
         instance_key = input("> ").strip()
 
-        verifier_instance = Verifier(prog_path)
+        verifier_instance = make_verifier(prog_path)
         row = verifier_instance.get_program(verifier_instance.program_hash, instance_key)
         if not row:
             log_or_print(f"[ERROR] Program (hash={verifier_instance.program_hash}) is not in the database. Run --authorize first.", "ERROR")
@@ -514,7 +489,7 @@ def create_credential_cmd(context: str, subcontext: str, password: str):
     Takes CONTEXT, SUBCONTEXT, PASSWORD and prints the created identifier.
     """
     try:
-        verifier_instance = Verifier(sys.argv[0])
+        verifier_instance = make_verifier(sys.argv[0])
         cid = verifier_instance.create_credential(context, subcontext, password)
         log_or_print(f"[OK] Stworzono credential (id={cid}) dla context='{context}', subcontext='{subcontext}'.", "INFO")
     except Exception as e:
@@ -530,7 +505,7 @@ def link_prog_cred_cmd(program_path: str, instance_key: str, cred_id: str):
             log_or_print("[ERROR] Invalid CRED_ID.", "ERROR")
             return
         cred_id_int = int(cred_id)
-        verifier_instance = Verifier(program_path)
+        verifier_instance = make_verifier(program_path)
         row = verifier_instance.get_program(verifier_instance.program_hash, instance_key)
         if not row:
             log_or_print("[ERROR] Program does not exist in the database. Run --authorize first.", "ERROR")
@@ -544,13 +519,13 @@ def link_prog_cred_cmd(program_path: str, instance_key: str, cred_id: str):
     except Exception as e:
         log_or_print(f"[ERROR] Error linking (cmd): {e}", "ERROR")
 
-def list_prog_creds_cmd(program_path: str, instance_key: str, show_passwords: bool = False):
+def list_prog_creds_cmd(program_path: str, instance_key: str):
     """
     Non-interactive display of credentials linked to a program.
     Takes PROGRAM_PATH and INSTANCE_KEY.
     """
     try:
-        verifier_instance = Verifier(program_path)
+        verifier_instance = make_verifier(program_path)
         row = verifier_instance.get_program(verifier_instance.program_hash, instance_key)
         if not row:
             log_or_print("[ERROR] Program does not exist in the database.", "ERROR")
@@ -559,10 +534,7 @@ def list_prog_creds_cmd(program_path: str, instance_key: str, show_passwords: bo
         if creds:
             log_or_print(f"[INFO] Program {verifier_instance.program_hash} (instance_key={instance_key}) has linked credentials:", "INFO")
             for cid, ctx, sctx, pwd in creds:
-                if show_passwords:
-                    log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='{pwd}'", "INFO")
-                else:
-                    log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='<hidden>'", "INFO")
+                log_or_print(f"  cred_id={cid}, context='{ctx}', subcontext='{sctx}', pass='<hidden>'", "INFO")
         else:
             log_or_print("[INFO] No credentials are linked to this program.", "INFO")
     except Exception as e:
@@ -578,7 +550,7 @@ def list_cred_progs_cmd(cred_id: str):
             log_or_print("[ERROR] Invalid CRED_ID.", "ERROR")
             return
         cred_id_int = int(cred_id)
-        verifier_instance = Verifier(sys.argv[0])
+        verifier_instance = make_verifier(sys.argv[0])
         c_row = verifier_instance.get_credential(cred_id_int)
         if not c_row:
             log_or_print("[ERROR] No such credential exists in the database.", "ERROR")
@@ -598,6 +570,7 @@ def main():
         parser = argparse.ArgumentParser(
             description="CLI for managing programs and credentials using the Verifier class."
         )
+        parser.add_argument("--config", metavar="CONFIG_FILE", help="Path to verifier_cfg.ini file.")
         parser.add_argument("--create-db", action="store_true", help="Create tables if they do not exist.")
         parser.add_argument("--authorize", nargs=3, metavar=("PROGRAM_NAME", "PROGRAM_PATH", "INSTANCE_KEY"),
                             help="Authorize a program (command mode) - provide name, path, and instance_key.")
@@ -623,11 +596,12 @@ def main():
                             help="Show programs for a given cred_id (command mode).")
         parser.add_argument("--add-pwd-cmd", nargs=5, metavar=("PROGRAM_PATH", "CONTEXT", "SUBCONTEXT", "PASSWORD", "INSTANCE_KEY"),
                             help="Create a new credential and link it to a program (command mode).")
-        parser.add_argument("--show-passwords", action="store_true",
-                            help="Show decrypted passwords in list commands.")
         parser.add_argument("--list-creds", action="store_true",
                         help="List credentials in the database.")
         args = parser.parse_args()
+
+        if args.config:
+            set_cli_config_file(args.config)
 
         if args.create_db:
             create_database()
@@ -635,9 +609,9 @@ def main():
             prog_name, prog_path, inst_key = args.authorize
             session_pass = authorize_program(prog_name, prog_path, inst_key)
             if session_pass is not None:
-                print(f"[SESSION] session_password={session_pass}")
+                print(f"[SESSION] session_key={session_pass}")
         elif args.list_progs:
-            list_programs(show_passwords=args.show_passwords)
+            list_programs()
         elif args.cleanup_progs:
             prog_name, prog_path, inst_key = args.cleanup_progs
             cleanup_stale_program_hashes(prog_name, prog_path, inst_key, execute=False)
@@ -647,11 +621,11 @@ def main():
         elif args.create_cred:
             create_credential_cli()
         elif args.list_creds:
-            list_credentials(show_passwords=args.show_passwords)
+            list_credentials()
         elif args.link_prog_cred:
             link_program_credential_cli()
         elif args.list_prog_creds:
-            list_program_credentials_cli(show_passwords=args.show_passwords)
+            list_program_credentials_cli()
         elif args.list_cred_progs:
             list_credential_programs_cli()
         elif args.add_pwd:
@@ -664,7 +638,7 @@ def main():
             link_prog_cred_cmd(prog_path, inst_key, cred_id)
         elif args.list_prog_creds_cmd:
             prog_path, inst_key = args.list_prog_creds_cmd
-            list_prog_creds_cmd(prog_path, inst_key, show_passwords=args.show_passwords)
+            list_prog_creds_cmd(prog_path, inst_key)
         elif args.list_cred_progs_cmd:
             (cred_id,) = args.list_cred_progs_cmd
             list_cred_progs_cmd(cred_id)

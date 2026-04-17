@@ -20,15 +20,15 @@ class Verifier:
       - program authorization and credential operations.
 
     The log_or_print() helper either prints messages or writes them to a log file,
-    depending on the LOG option in config.ini (section [main]).
+    depending on the LOG option in the configured ini file (section [main]).
 
     Note: get_context_password is only available after successful authorization
     via authenticate_and_regenerate.
     """
-    def __init__(self, program_path: str):
+    def __init__(self, program_path: str, config_file: str | None = None):
         self.program_path = program_path
         self.instance_key = None
-        self.config_file = "config.ini"
+        self.config_file = config_file or "verifier_cfg.ini"
         # Load configuration
         try:
             if not os.path.exists(self.config_file):
@@ -45,10 +45,10 @@ class Verifier:
         self.logger = None
         if self.config.has_option("main", "LOG") and self.config.get("main", "LOG") == "1":
             self.logger = logging.getLogger("VerifierLogger")
-            self.logger.setLevel(logging.ERROR)
+            self.logger.setLevel(logging.INFO)
             if not self.logger.handlers:
                 fh = logging.FileHandler("verifier.log")
-                fh.setLevel(logging.ERROR)
+                fh.setLevel(logging.INFO)
                 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
                 fh.setFormatter(formatter)
                 self.logger.addHandler(fh)
@@ -72,11 +72,11 @@ class Verifier:
 
     def log_or_print(self, message: str, level: str = "INFO"):
         """
-        If config.ini has LOG=1 in section [main], the message is written to the logger.
-        Otherwise it is printed to stdout.
+        If the configured ini file has LOG=1 in section [main], the message is written to the logger.
+        In every case, the message is also printed to stdout so CLI users can see the result.
         """
+        lvl = level.upper()
         if self.logger:
-            lvl = level.upper()
             if lvl == "INFO":
                 self.logger.info(message)
             elif lvl == "WARNING":
@@ -85,8 +85,7 @@ class Verifier:
                 self.logger.error(message)
             else:
                 self.logger.info(message)
-        else:
-            print(message)
+        print(message)
 
 
     def _verify_file_owner_only_permissions(self, file_path: str):
@@ -269,18 +268,18 @@ class Verifier:
             raise Exception(f"Error computing hash: {e}")
 
     def generate_random_password(self, length: int = 12) -> str:
-        """Generate a random password."""
+        """Generate a random secret."""
         try:
             alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_-+="
             return "".join(secrets.choice(alphabet) for _ in range(length))
         except Exception as e:
-            self.log_or_print(f"Error generating password: {e}", "ERROR")
-            raise Exception(f"Error generating password: {e}")
+            self.log_or_print(f"Error generating secret: {e}", "ERROR")
+            raise Exception(f"Error generating secret: {e}")
 
     def get_program(self, program_hash: str, instance_key: str):
         """
         Fetch a program record from the database by hash and instance key.
-        Returns (program_hash, program_name, decrypted_password, instance_key) or None.
+        Returns (program_hash, program_name, decrypted_session_key, instance_key) or None.
         """
         try:
             self.require_tls_pair_for_sensitive_operation("get_program")
@@ -304,7 +303,7 @@ class Verifier:
             raise Exception(f"Error fetching program: {e}")
 
     def update_program_password(self, program_hash: str, instance_key: str, new_pass: str):
-        """Update the ephemeral program password for a given (program_hash, instance_key)."""
+        """Update the ephemeral program session key for a given (program_hash, instance_key)."""
         try:
             self.require_tls_pair_for_sensitive_operation("update_program_password")
             enc = self.encrypt_col_value(new_pass)
@@ -316,13 +315,13 @@ class Verifier:
             """, (enc, program_hash, instance_key))
             self.commit_and_close(conn)
         except Exception as e:
-            self.log_or_print(f"Error updating program password: {e}", "ERROR")
-            raise Exception(f"Error updating program password: {e}")
+            self.log_or_print(f"Error updating program session key: {e}", "ERROR")
+            raise Exception(f"Error updating program session key: {e}")
 
     def authenticate_and_regenerate(self, old_pass: str, instance_key: str) -> tuple[bool, str | None]:
         """
-        Authorize a program using the old password and instance key.
-        On success, generate a new password and atomically update the record in one transaction.
+        Authorize a program using the old session key and instance key.
+        On success, generate a new session key and atomically update the record in one transaction.
 
         If a record exists for the given instance_key but the current file hash does not match
         the stored one, the method raises an exception.
@@ -354,7 +353,7 @@ class Verifier:
             current_pass = self.decrypt_col_value(row[2]) if row[2] else None
             if current_pass != old_pass:
                 conn.rollback()
-                raise Exception("The provided old password is incorrect.")
+                raise Exception("The provided old session key is incorrect.")
 
             new_pass = self.generate_random_password(12)
             new_enc = self.encrypt_col_value(new_pass)
@@ -417,7 +416,7 @@ class Verifier:
 
     def get_context_password(self, context: str, subcontext: str) -> str | None:
         """
-        Fetch the decrypted password for a given context and subcontext.
+        Fetch the decrypted credential password for a given context and subcontext.
         Access is only allowed after successful authorization.
         """
         try:
@@ -430,8 +429,8 @@ class Verifier:
                     return dec_pass
             return None
         except Exception as e:
-            self.log_or_print(f"Error fetching context password: {e}", "ERROR")
-            raise Exception(f"Error fetching context password: {e}")
+            self.log_or_print(f"Error fetching context credential password: {e}", "ERROR")
+            raise Exception(f"Error fetching context credential password: {e}")
 
     def create_credential(self, context: str, subcontext: str, plain_pass: str) -> int:
         """Create a new credential in the database and return its id."""
@@ -511,22 +510,22 @@ class Verifier:
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
-        print("Usage: verifier.py <program_path> <old_password> [INSTANCE_KEY]")
+        print("Usage: verifier.py <program_path> <old_session_key> [INSTANCE_KEY]")
         sys.exit(1)
     prog_path = sys.argv[1]
-    old_password = sys.argv[2]
+    old_session_key = sys.argv[2]
     try:
         verifier_instance = Verifier(prog_path)
         instance_key = sys.argv[3] if len(sys.argv) > 3 else "default"
-        success, new_pass = verifier_instance.authenticate_and_regenerate(old_password, instance_key)
+        success, new_pass = verifier_instance.authenticate_and_regenerate(old_session_key, instance_key)
         if success:
-            verifier_instance.log_or_print(f"[OK] Authorization complete, new password: {new_pass}", "INFO")
+            verifier_instance.log_or_print(f"[OK] Authorization complete, new session key: {new_pass}", "INFO")
             try:
                 ctx_pwd = verifier_instance.get_context_password("database", "read_only")
                 if ctx_pwd:
-                    verifier_instance.log_or_print(f"[INFO] Password for context 'database' / 'read_only': {ctx_pwd}", "INFO")
+                    verifier_instance.log_or_print(f"[INFO] Credential password for context 'database' / 'read_only': {ctx_pwd}", "INFO")
                 else:
-                    verifier_instance.log_or_print("[INFO] No password for the requested context.", "INFO")
+                    verifier_instance.log_or_print("[INFO] No credential password for the requested context.", "INFO")
             except Exception as e:
                 verifier_instance.log_or_print(f"[ERROR] {e}", "ERROR")
         else:
