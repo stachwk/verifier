@@ -153,7 +153,7 @@ python3.12 -m pip install cryptography pysqlcipher3 cffi
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](/media/wojtek/virtdata/home/wojtek/git/verifier/LICENSE) for the full text.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for the full text.
 
 ## Configuration
 
@@ -175,9 +175,69 @@ LOG = 1
 
 With `LOG = 0`, messages are printed to standard output.
 
+## TLS Material Guard
+
 If `cert.pem` and `key.pem` are present in the project directory, Verifier treats
-them as an additional API identity check and verifies that they form a matching pair.
-The database and local key files are also normalized to owner-only permissions.
+them as an additional identity condition for sensitive operations.
+
+Verifier checks that:
+
+- both files exist together
+- the certificate and private key form a matching pair
+- both files have owner-only permissions
+
+Sensitive operations should fail if this validation does not pass.
+
+Typical sensitive operations include:
+
+- `--authorize`
+- `--cleanup-progs`
+- `--cleanup-progs-exec`
+- commands that explicitly reveal stored secrets, for example `--show-passwords`
+
+If the files are not present, the project can still operate in its normal mode.
+If they are present, they are treated as an extra guard and must remain valid.
+
+Recommended permissions:
+
+```bash
+chmod 600 cert.pem
+chmod 600 key.pem
+chmod 600 verifier.db verifier-db_key.key verifier-secret.key
+```
+
+## Database and Key Files
+
+The following files must be treated as one consistent set:
+
+- `verifier.db`
+- `verifier-db_key.key`
+- `verifier-secret.key`
+
+Do not replace only one of them.
+
+Important consequences:
+
+- replacing `verifier-db_key.key` without the matching database will make SQLCipher
+  report errors such as `file is not a database`
+- replacing `verifier-secret.key` without the matching database may break decryption
+  of encrypted column values
+- restoring the database from backup should always restore the matching key files too
+
+In practice, these three files should be backed up and restored together.
+
+## Authorized Timestamp
+
+The `programs` table stores `authorized_at`.
+
+This value is used to:
+
+- show when a program instance was last authorized
+- confirm that repeated `--authorize` updates the active record
+- simplify diagnostics and auditing
+
+The `--create-db` command is expected to be idempotent, and repeated runs should not
+break existing databases.
 
 ## Credential Management
 
@@ -202,6 +262,23 @@ A credential consists of:
 - encrypted password data
 
 That lets you distinguish, for example, `database/read_only` from `database/read_write`.
+
+## Secret Visibility in CLI
+
+By default, list-style CLI commands should not reveal decrypted secrets.
+
+Typical behavior:
+
+- `--list-progs` hides `ephemeral_password`
+- `--list-prog-creds` and `--list-prog-creds-cmd` hide linked credential passwords
+- explicit `--show-passwords` is required to reveal them
+
+This reduces accidental leakage to:
+
+- terminal history
+- scrollback buffers
+- screenshots
+- copied logs
 
 ## Error Handling
 

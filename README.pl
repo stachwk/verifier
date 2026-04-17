@@ -26,8 +26,7 @@ To daje trzy ważne własności:
 - każda poprawna autoryzacja może odświeżyć klucz, więc poprzedni stan nie jest
   wiecznie ważny
 
-W praktyce Verifier jest lekkim mechanizmem: program identity + instance identity +
-linked secret.
+W praktyce Verifier jest lekkim mechanizmem: program identity + instance identity + linked secret.
 
 ## Jak to działa
 
@@ -154,7 +153,7 @@ python3.12 -m pip install cryptography pysqlcipher3 cffi
 
 ## Licencja
 
-Projekt jest udostępniony na licencji MIT. Pełny tekst znajduje się w pliku [LICENSE](/media/wojtek/virtdata/home/wojtek/git/verifier/LICENSE).
+Projekt jest udostępniony na licencji MIT. Pełny tekst znajduje się w pliku [LICENSE](LICENSE).
 
 ## Konfiguracja projektu
 
@@ -176,18 +175,76 @@ LOG = 1
 
 Przy `LOG = 0` komunikaty trafiają na standardowe wyjście.
 
+## Ochrona materialu TLS
+
 Jesli w katalogu projektu znajduja sie `cert.pem` i `key.pem`, Verifier traktuje
-je jako dodatkowy warunek tozsamosci API i sprawdza, czy para do siebie pasuje.
-Baza oraz lokalne pliki kluczy sa tez normalizowane do uprawnien tylko dla wlasciciela.
+je jako dodatkowy warunek tozsamosci dla operacji wrazliwych.
 
-## Zarządzanie credentialami
+Verifier sprawdza, czy:
 
-CLI obsługuje dwa główne scenariusze:
+- oba pliki wystepuja razem
+- certyfikat i klucz prywatny tworza poprawna pare
+- oba pliki maja uprawnienia tylko dla wlasciciela
+
+Operacje wrazliwe powinny zostac zablokowane, jesli ta walidacja sie nie powiedzie.
+
+Typowe operacje wrazliwe to:
+
+- `--authorize`
+- `--cleanup-progs`
+- `--cleanup-progs-exec`
+- komendy jawnie ujawniajace sekrety, np. `--show-passwords`
+
+Jesli plikow nie ma, projekt moze dzialac w normalnym trybie.
+Jesli jednak sa obecne, sa traktowane jako dodatkowa ochrona i musza pozostac poprawne.
+
+Zalecane uprawnienia:
+
+```bash
+chmod 600 cert.pem
+chmod 600 key.pem
+chmod 600 verifier.db verifier-db_key.key verifier-secret.key
+```
+
+## Baza i pliki kluczy
+
+Ponizsze pliki trzeba traktowac jako jeden spojny zestaw:
+
+- `verifier.db`
+- `verifier-db_key.key`
+- `verifier-secret.key`
+
+Nie nalezy podmieniac tylko jednego z nich.
+
+Wazne konsekwencje:
+
+- podmiana `verifier-db_key.key` bez pasujacej bazy spowoduje w SQLCipher bledy typu `file is not a database`
+- podmiana `verifier-secret.key` bez pasujacej bazy moze uniemozliwic odszyfrowanie zaszyfrowanych kolumn
+- odtwarzanie bazy z backupu powinno zawsze przywracac tez pasujace pliki kluczy
+
+W praktyce te trzy pliki powinny byc archiwizowane i odtwarzane razem.
+
+## Znacznik czasu autoryzacji
+
+Tabela `programs` przechowuje pole `authorized_at`.
+
+Ta wartosc sluzy do:
+
+- pokazania, kiedy instancja programu byla ostatnio autoryzowana
+- potwierdzenia, ze ponowne `--authorize` aktualizuje aktywny rekord
+- ulatwienia diagnostyki i audytu
+
+Polecenie `--create-db` powinno byc idempotentne, a jego wielokrotne uruchamianie
+nie powinno psuc istniejacej bazy.
+
+## Zarzadzanie credentialami
+
+CLI obsluguje dwa glowne scenariusze:
 
 - tworzenie credentiala
 - linkowanie credentiala do programu i instancji
 
-Najważniejsze komendy:
+Najwazniejsze komendy:
 
 - `--create-cred` lub `--create-cred-cmd`
 - `--link-prog-cred` lub `--link-prog-cred-cmd`
@@ -196,25 +253,42 @@ Najważniejsze komendy:
 - `--list-creds`
 - `--add-pwd-cmd`
 
-Credential składa się z:
+Credential sklada sie z:
 
 - `context`
 - `subcontext`
-- zaszyfrowanego hasła
+- zaszyfrowanego hasla
 
-To pozwala rozróżniać np. `database/read_only` i `database/read_write`.
+To pozwala rozrozniac np. `database/read_only` i `database/read_write`.
 
-## Obsługa błędów
+## Widocznosc sekretow w CLI
 
-Projekt zakłada prostą, czytelną obsługę błędów:
+Domyslnie komendy typu listujacego nie powinny pokazywac odszyfrowanych sekretow.
 
-- brak pliku konfiguracyjnego kończy inicjalizację
-- brak pliku programu oznacza, że hash nie może zostać policzony
-- błędny `instance_key` nie zwróci rekordu z bazy
-- zły stary klucz uniemożliwi autoryzację
-- brak credentiala zwróci `None`
+Typowe zachowanie:
 
-W praktyce komunikaty błędów mają od razu wskazać, czy problem dotyczy:
+- `--list-progs` ukrywa `ephemeral_password`
+- `--list-prog-creds` i `--list-prog-creds-cmd` ukrywaja hasla credentiali
+- jawne `--show-passwords` jest wymagane, aby pokazac sekrety
+
+To zmniejsza ryzyko przypadkowego wycieku przez:
+
+- historie terminala
+- scrollback
+- zrzuty ekranu
+- kopiowane logi
+
+## Obsluga bledow
+
+Projekt zaklada prosta, czytelna obsluge bledow:
+
+- brak pliku konfiguracyjnego konczy inicjalizacje
+- brak pliku programu oznacza, ze hash nie moze zostac policzony
+- bledny `instance_key` nie zwroci rekordu z bazy
+- zly stary klucz uniemożliwi autoryzacje
+- brak credentiala zwroci `None`
+
+W praktyce komunikaty bledow maja od razu wskazac, czy problem dotyczy:
 
 - konfiguracji
 - pliku programu
@@ -224,12 +298,12 @@ W praktyce komunikaty błędów mają od razu wskazać, czy problem dotyczy:
 
 ## Podsumowanie
 
-Verifier umożliwia:
+Verifier umozliwia:
 
 - zaszyfrowane przechowywanie credentiali
 - przypinanie ich do konkretnego programu
 - rozdzielanie instancji tego samego programu
-- odświeżanie klucza po autoryzacji
+- odswiezanie klucza po autoryzacji
 
-To lekki, przejrzysty mechanizm do scenariuszy, w których program ma sam
-potwierdzić swoją tożsamość i dopiero wtedy dostać dostęp do przypisanych danych.
+To lekki, przejrzysty mechanizm do scenariuszy, w ktorych program ma sam
+potwierdzic swoja tozsamosc i dopiero wtedy dostac dostep do przypisanych danych.
