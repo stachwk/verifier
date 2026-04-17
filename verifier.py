@@ -7,6 +7,9 @@ import secrets
 import configparser
 import logging
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from pysqlcipher3 import dbapi2 as sqlite3
 
 class Verifier:
@@ -55,6 +58,10 @@ class Verifier:
         try:
             self.db_key = self._load_db_key()
             self.secret_cipher = self._load_secret_cipher()
+            self.api_cert_file, self.api_key_file = self._resolve_api_identity_paths()
+            self.api_identity_verified = False
+            self._load_api_identity_if_present()
+            self._enforce_storage_permissions()
             self.program_hash = self.hash_program(self.program_path)
             if self.program_hash is None:
                 raise FileNotFoundError(f"Cannot read file: {self.program_path}")
@@ -114,6 +121,82 @@ class Verifier:
             self.log_or_print(f"Error loading secret key: {e}", "ERROR")
             raise Exception(f"Error loading secret key: {e}")
 
+    def _resolve_api_identity_paths(self) -> tuple[str | None, str | None]:
+        """Resolve optional PEM identity files used to gate API access."""
+        cert_file = None
+        key_file = None
+        if self.config.has_option("paths", "API_CERT_FILE"):
+            cert_file = self.config.get("paths", "API_CERT_FILE").strip() or None
+        if self.config.has_option("paths", "API_KEY_FILE"):
+            key_file = self.config.get("paths", "API_KEY_FILE").strip() or None
+
+        # Backward compatible default: use cert.pem/key.pem when both files exist.
+        if cert_file is None and key_file is None:
+            if os.path.exists("cert.pem") and os.path.exists("key.pem"):
+                cert_file = "cert.pem"
+                key_file = "key.pem"
+
+        if bool(cert_file) != bool(key_file):
+            raise Exception("API cert/key configuration must define both files or neither.")
+
+        return cert_file, key_file
+
+    def _ensure_file_mode(self, path: str, mode: int):
+        """Force a strict permission mask on a file when it exists."""
+        if not path or not os.path.exists(path):
+            return
+        try:
+            os.chmod(path, mode)
+        except Exception as e:
+            raise Exception(f"Error setting permissions for {path}: {e}")
+
+    def _secure_db_sidecars(self):
+        """Keep the database file and WAL/SHM sidecars owner-only."""
+        for suffix in ("", "-wal", "-shm"):
+            self._ensure_file_mode(f"{self.DB_NAME}{suffix}", 0o600)
+
+    def _enforce_storage_permissions(self):
+        """Normalize permissions for local secret material and the database."""
+        self._ensure_file_mode(self.DB_KEY_FILE, 0o600)
+        self._ensure_file_mode(self.SECRET_KEY_FILE, 0o600)
+        if self.api_cert_file:
+            self._ensure_file_mode(self.api_cert_file, 0o600)
+        if self.api_key_file:
+            self._ensure_file_mode(self.api_key_file, 0o600)
+        self._secure_db_sidecars()
+
+    def _load_api_identity_if_present(self):
+        """Verify cert/key pair when the repository is configured to use one."""
+        if not self.api_cert_file and not self.api_key_file:
+            return
+        if not os.path.exists(self.api_cert_file):
+            raise FileNotFoundError(f"API certificate not found: {self.api_cert_file}")
+        if not os.path.exists(self.api_key_file):
+            raise FileNotFoundError(f"API private key not found: {self.api_key_file}")
+
+        with open(self.api_cert_file, "rb") as cert_fp:
+            cert_data = cert_fp.read()
+        with open(self.api_key_file, "rb") as key_fp:
+            key_data = key_fp.read()
+
+        cert = x509.load_pem_x509_certificate(cert_data)
+        private_key = serialization.load_pem_private_key(key_data, password=None)
+
+        cert_pub = cert.public_key().public_bytes(
+            encoding=Encoding.DER,
+            format=PublicFormat.SubjectPublicKeyInfo,
+        )
+        key_pub = private_key.public_key().public_bytes(
+            encoding=Encoding.DER,
+            format=PublicFormat.SubjectPublicKeyInfo,
+        )
+
+        if cert_pub != key_pub:
+            raise Exception("API cert/key pair does not match.")
+
+        self.api_identity_verified = True
+        self.api_cert_fingerprint = cert.fingerprint(hashes.SHA256()).hex()
+
     def get_db_connection(self):
         """Open a connection to the encrypted SQLCipher database."""
         try:
@@ -126,6 +209,7 @@ class Verifier:
                 cursor.execute("PRAGMA journal_mode = WAL")
             except Exception:
                 pass
+            self._secure_db_sidecars()
             return conn, cursor
         except Exception as e:
             self.log_or_print(f"Error connecting to database: {e}", "ERROR")
@@ -141,6 +225,7 @@ class Verifier:
         finally:
             try:
                 conn.close()
+                self._secure_db_sidecars()
             except Exception as e:
                 self.log_or_print(f"Error closing database connection: {e}", "ERROR")
                 raise Exception(f"Error closing database connection: {e}")

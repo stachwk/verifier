@@ -176,6 +176,10 @@ LOG = 1
 
 Przy `LOG = 0` komunikaty trafiają na standardowe wyjście.
 
+Jesli w katalogu projektu znajduja sie `cert.pem` i `key.pem`, Verifier traktuje
+je jako dodatkowy warunek tozsamosci API i sprawdza, czy para do siebie pasuje.
+Baza oraz lokalne pliki kluczy sa tez normalizowane do uprawnien tylko dla wlasciciela.
+
 ## Zarządzanie credentialami
 
 CLI obsługuje dwa główne scenariusze:

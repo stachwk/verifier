@@ -175,6 +175,10 @@ LOG = 1
 
 With `LOG = 0`, messages are printed to standard output.
 
+If `cert.pem` and `key.pem` are present in the project directory, Verifier treats
+them as an additional API identity check and verifies that they form a matching pair.
+The database and local key files are also normalized to owner-only permissions.
+
 ## Credential Management
 
 The CLI supports two main workflows:
