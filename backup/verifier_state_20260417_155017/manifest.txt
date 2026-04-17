@@ -1,0 +1,7 @@
+created_at=20260417_155017
+config_file=./config.ini
+config_dir=/home/wojtek/git/verifier
+db_file=/home/wojtek/git/verifier/db/verifier.db
+db_key_file=/home/wojtek/git/verifier/db/verifier-db_key.key
+secret_key_file=/home/wojtek/git/verifier/db/verifier-secret.key
+backup_dir=backup/verifier_state_20260417_155017
