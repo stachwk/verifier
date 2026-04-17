@@ -619,6 +619,8 @@ def main():
                             help="Create a new credential and link it to a program (command mode).")
         parser.add_argument("--show-passwords", action="store_true",
                             help="Show decrypted passwords in list commands.")
+        parser.add_argument("--list-creds", action="store_true",
+                        help="List credentials in the database.")
         args = parser.parse_args()
 
         if args.create_db:
@@ -636,6 +638,8 @@ def main():
             cleanup_stale_program_hashes(prog_name, prog_path, inst_key, execute=True)
         elif args.create_cred:
             create_credential_cli()
+        elif args.list_creds:
+            list_credentials(show_passwords=args.show_passwords)
         elif args.link_prog_cred:
             link_program_credential_cli()
         elif args.list_prog_creds:
