@@ -144,6 +144,7 @@ def authorize_program(program_name: str, program_path: str, instance_key: str):
     conn = None
     try:
         verifier_instance = Verifier(program_path)
+        verifier_instance.require_tls_pair_for_sensitive_operation("authorize_program")
         new_pass = verifier_instance.generate_random_password(12)
         conn, cursor = verifier_instance.get_db_connection()
         cursor.execute("BEGIN IMMEDIATE")
@@ -230,6 +231,7 @@ def cleanup_stale_program_hashes(program_name: str, program_path: str, instance_
     conn = None
     try:
         verifier_instance = Verifier(program_path)
+        verifier_instance.require_tls_pair_for_sensitive_operation("cleanup_stale_program_hashes")
         current_hash = verifier_instance.program_hash
         conn, cursor = verifier_instance.get_db_connection()
         cursor.execute("BEGIN IMMEDIATE")
@@ -305,6 +307,8 @@ def list_programs(show_passwords: bool = False):
         rows = cursor.fetchall()
         verifier_instance.commit_and_close(conn)
         log_or_print("[INFO] Program list:", "INFO")
+        if show_passwords:
+            verifier_instance.require_tls_pair_for_sensitive_operation("list_programs_show_passwords")
         for phash, pname, enc_pass, ikey, authorized_at in rows:
             if show_passwords:
                 dec_pass = verifier_instance.decrypt_col_value(enc_pass) if enc_pass else None
@@ -333,6 +337,8 @@ def list_credentials(show_passwords: bool = False):
         rows = cursor.fetchall()
         verifier_instance.commit_and_close(conn)
         log_or_print("[INFO] Credential list:", "INFO")
+        if show_passwords:
+            verifier_instance.require_tls_pair_for_sensitive_operation("list_credentials_show_passwords")
         for cred_id, context, subcontext, enc_data in rows:
             if show_passwords:
                 try:

@@ -6,10 +6,9 @@ import hashlib
 import secrets
 import configparser
 import logging
-from cryptography.fernet import Fernet, InvalidToken
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from pysqlcipher3 import dbapi2 as sqlite3
 
 class Verifier:
@@ -58,10 +57,6 @@ class Verifier:
         try:
             self.db_key = self._load_db_key()
             self.secret_cipher = self._load_secret_cipher()
-            self.api_cert_file, self.api_key_file = self._resolve_api_identity_paths()
-            self.api_identity_verified = False
-            self._load_api_identity_if_present()
-            self._enforce_storage_permissions()
             self.program_hash = self.hash_program(self.program_path)
             if self.program_hash is None:
                 raise FileNotFoundError(f"Cannot read file: {self.program_path}")
@@ -70,6 +65,10 @@ class Verifier:
             raise Exception(f"Initialization error: {e}")
 
         self.authenticated = False
+        self.cert_file = "cert.pem"
+        self.key_file = "key.pem"
+        self._tls_pair_checked = False
+        self._tls_pair_available = False
 
     def log_or_print(self, message: str, level: str = "INFO"):
         """
@@ -88,6 +87,87 @@ class Verifier:
                 self.logger.info(message)
         else:
             print(message)
+
+
+    def _verify_file_owner_only_permissions(self, file_path: str):
+        """Ensure that a sensitive file is not group/world accessible."""
+        try:
+            st_mode = os.stat(file_path).st_mode & 0o777
+            if st_mode & 0o077:
+                raise Exception(
+                    f"Insecure permissions on '{file_path}'. Expected owner-only access, got mode {oct(st_mode)}."
+                )
+        except Exception as e:
+            self.log_or_print(f"Error checking permissions for {file_path}: {e}", "ERROR")
+            raise Exception(f"Error checking permissions for {file_path}: {e}")
+
+    def verify_tls_pair_if_present(self) -> bool:
+        """
+        Validate cert.pem/key.pem if they are available in the working directory.
+
+        Rules:
+          - if neither file exists, return False and allow the caller to continue,
+          - if only one exists, raise an exception,
+          - if both exist, verify owner-only permissions and confirm they match.
+        """
+        try:
+            cert_exists = os.path.exists(self.cert_file)
+            key_exists = os.path.exists(self.key_file)
+
+            if not cert_exists and not key_exists:
+                self._tls_pair_checked = True
+                self._tls_pair_available = False
+                return False
+
+            if cert_exists != key_exists:
+                raise Exception(
+                    "Incomplete TLS material set: both cert.pem and key.pem must be present together."
+                )
+
+            self._verify_file_owner_only_permissions(self.cert_file)
+            self._verify_file_owner_only_permissions(self.key_file)
+
+            with open(self.cert_file, "rb") as f:
+                cert_data = f.read()
+            with open(self.key_file, "rb") as f:
+                key_data = f.read()
+
+            cert_obj = x509.load_pem_x509_certificate(cert_data)
+            key_obj = load_pem_private_key(key_data, password=None)
+
+            cert_numbers = cert_obj.public_key().public_numbers()
+            key_numbers = key_obj.public_key().public_numbers()
+
+            if cert_numbers != key_numbers:
+                raise Exception("cert.pem and key.pem do not match.")
+
+            self._tls_pair_checked = True
+            self._tls_pair_available = True
+            return True
+        except Exception as e:
+            self.log_or_print(f"Error verifying TLS material: {e}", "ERROR")
+            raise Exception(f"Error verifying TLS material: {e}")
+
+    def require_tls_pair_for_sensitive_operation(self, operation_name: str):
+        """
+        If cert.pem/key.pem are available, require them to be a valid pair before
+        allowing a sensitive operation to continue.
+        """
+        try:
+            tls_available = self.verify_tls_pair_if_present()
+            if tls_available:
+                self.log_or_print(
+                    f"[INFO] TLS material verified for sensitive operation: {operation_name}",
+                    "INFO"
+                )
+        except Exception as e:
+            self.log_or_print(
+                f"Sensitive operation '{operation_name}' blocked by TLS verification error: {e}",
+                "ERROR"
+            )
+            raise Exception(
+                f"Sensitive operation '{operation_name}' blocked by TLS verification error: {e}"
+            )
 
     def _load_db_key(self) -> str:
         """Load or generate the SQLCipher key."""
@@ -121,82 +201,6 @@ class Verifier:
             self.log_or_print(f"Error loading secret key: {e}", "ERROR")
             raise Exception(f"Error loading secret key: {e}")
 
-    def _resolve_api_identity_paths(self) -> tuple[str | None, str | None]:
-        """Resolve optional PEM identity files used to gate API access."""
-        cert_file = None
-        key_file = None
-        if self.config.has_option("paths", "API_CERT_FILE"):
-            cert_file = self.config.get("paths", "API_CERT_FILE").strip() or None
-        if self.config.has_option("paths", "API_KEY_FILE"):
-            key_file = self.config.get("paths", "API_KEY_FILE").strip() or None
-
-        # Backward compatible default: use cert.pem/key.pem when both files exist.
-        if cert_file is None and key_file is None:
-            if os.path.exists("cert.pem") and os.path.exists("key.pem"):
-                cert_file = "cert.pem"
-                key_file = "key.pem"
-
-        if bool(cert_file) != bool(key_file):
-            raise Exception("API cert/key configuration must define both files or neither.")
-
-        return cert_file, key_file
-
-    def _ensure_file_mode(self, path: str, mode: int):
-        """Force a strict permission mask on a file when it exists."""
-        if not path or not os.path.exists(path):
-            return
-        try:
-            os.chmod(path, mode)
-        except Exception as e:
-            raise Exception(f"Error setting permissions for {path}: {e}")
-
-    def _secure_db_sidecars(self):
-        """Keep the database file and WAL/SHM sidecars owner-only."""
-        for suffix in ("", "-wal", "-shm"):
-            self._ensure_file_mode(f"{self.DB_NAME}{suffix}", 0o600)
-
-    def _enforce_storage_permissions(self):
-        """Normalize permissions for local secret material and the database."""
-        self._ensure_file_mode(self.DB_KEY_FILE, 0o600)
-        self._ensure_file_mode(self.SECRET_KEY_FILE, 0o600)
-        if self.api_cert_file:
-            self._ensure_file_mode(self.api_cert_file, 0o600)
-        if self.api_key_file:
-            self._ensure_file_mode(self.api_key_file, 0o600)
-        self._secure_db_sidecars()
-
-    def _load_api_identity_if_present(self):
-        """Verify cert/key pair when the repository is configured to use one."""
-        if not self.api_cert_file and not self.api_key_file:
-            return
-        if not os.path.exists(self.api_cert_file):
-            raise FileNotFoundError(f"API certificate not found: {self.api_cert_file}")
-        if not os.path.exists(self.api_key_file):
-            raise FileNotFoundError(f"API private key not found: {self.api_key_file}")
-
-        with open(self.api_cert_file, "rb") as cert_fp:
-            cert_data = cert_fp.read()
-        with open(self.api_key_file, "rb") as key_fp:
-            key_data = key_fp.read()
-
-        cert = x509.load_pem_x509_certificate(cert_data)
-        private_key = serialization.load_pem_private_key(key_data, password=None)
-
-        cert_pub = cert.public_key().public_bytes(
-            encoding=Encoding.DER,
-            format=PublicFormat.SubjectPublicKeyInfo,
-        )
-        key_pub = private_key.public_key().public_bytes(
-            encoding=Encoding.DER,
-            format=PublicFormat.SubjectPublicKeyInfo,
-        )
-
-        if cert_pub != key_pub:
-            raise Exception("API cert/key pair does not match.")
-
-        self.api_identity_verified = True
-        self.api_cert_fingerprint = cert.fingerprint(hashes.SHA256()).hex()
-
     def get_db_connection(self):
         """Open a connection to the encrypted SQLCipher database."""
         try:
@@ -209,7 +213,6 @@ class Verifier:
                 cursor.execute("PRAGMA journal_mode = WAL")
             except Exception:
                 pass
-            self._secure_db_sidecars()
             return conn, cursor
         except Exception as e:
             self.log_or_print(f"Error connecting to database: {e}", "ERROR")
@@ -225,7 +228,6 @@ class Verifier:
         finally:
             try:
                 conn.close()
-                self._secure_db_sidecars()
             except Exception as e:
                 self.log_or_print(f"Error closing database connection: {e}", "ERROR")
                 raise Exception(f"Error closing database connection: {e}")
@@ -281,6 +283,7 @@ class Verifier:
         Returns (program_hash, program_name, decrypted_password, instance_key) or None.
         """
         try:
+            self.require_tls_pair_for_sensitive_operation("get_program")
             conn, cursor = self.get_db_connection()
             cursor.execute("""
                 SELECT program_hash, program_name, program_password, instance_key
@@ -303,6 +306,7 @@ class Verifier:
     def update_program_password(self, program_hash: str, instance_key: str, new_pass: str):
         """Update the ephemeral program password for a given (program_hash, instance_key)."""
         try:
+            self.require_tls_pair_for_sensitive_operation("update_program_password")
             enc = self.encrypt_col_value(new_pass)
             conn, cursor = self.get_db_connection()
             cursor.execute("""
@@ -325,6 +329,7 @@ class Verifier:
         """
         conn = None
         try:
+            self.require_tls_pair_for_sensitive_operation("authenticate_and_regenerate")
             conn, cursor = self.get_db_connection()
 
             # Bierzemy blokade zapisu od razu, aby uniknac wyscigu miedzy sesjami
@@ -387,6 +392,7 @@ class Verifier:
     def get_program_credentials(self, program_hash: str, instance_key: str | None = None) -> list[tuple[int, str, str, str]]:
         """Fetch all credentials linked to a program instance."""
         try:
+            self.require_tls_pair_for_sensitive_operation("get_program_credentials")
             conn, cursor = self.get_db_connection()
             if instance_key is None:
                 instance_key = self.instance_key
@@ -415,6 +421,7 @@ class Verifier:
         Access is only allowed after successful authorization.
         """
         try:
+            self.require_tls_pair_for_sensitive_operation("get_context_password")
             if not self.authenticated:
                 raise Exception("Access denied. Run authenticate_and_regenerate first.")
             creds = self.get_program_credentials(self.program_hash, self.instance_key)
@@ -429,6 +436,7 @@ class Verifier:
     def create_credential(self, context: str, subcontext: str, plain_pass: str) -> int:
         """Create a new credential in the database and return its id."""
         try:
+            self.require_tls_pair_for_sensitive_operation("create_credential")
             enc = self.encrypt_col_value(plain_pass)
             conn, cursor = self.get_db_connection()
             cursor.execute("""
@@ -448,6 +456,7 @@ class Verifier:
         Returns (cred_id, context, subcontext, decrypted_data) or None.
         """
         try:
+            self.require_tls_pair_for_sensitive_operation("get_credential")
             conn, cursor = self.get_db_connection()
             cursor.execute("""
                 SELECT cred_id, context, subcontext, credential_data
@@ -467,6 +476,7 @@ class Verifier:
     def link_program_to_credential(self, cred_id: int, instance_key: str | None = None):
         """Link the current program to a credential for a specific instance."""
         try:
+            self.require_tls_pair_for_sensitive_operation("link_program_to_credential")
             if instance_key is None:
                 instance_key = self.instance_key
             if instance_key is None:
