@@ -4,6 +4,7 @@
 import argparse
 import os
 import random
+import re
 import string
 import subprocess
 import sys
@@ -93,6 +94,16 @@ def main():
     )
     if proc_auth.returncode != 0:
         raise SystemExit(f"[ERROR] --authorize nie powiodlo sie:\n{proc_auth.stdout}\n{proc_auth.stderr}")
+
+    session_match = re.search(r"\[SESSION\] session_password=([^\s]+)", proc_auth.stdout)
+    if not session_match:
+        raise AssertionError("Po --authorize powinno byc widoczne haslo sesji administratora")
+    session_password = session_match.group(1)
+    assert_contains(
+        proc_auth.stdout,
+        session_password,
+        "Haslo sesji nie zostalo wypisane w odpowiedzi --authorize"
+    )
 
     # Krok 2: dodanie credentiala i powiazanie z programem
     proc_add_pwd = run_cmd(

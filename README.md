@@ -32,6 +32,7 @@ program identity + instance identity + linked secret
 
 1. Run `--create-db` to create the database tables.
 2. Run `--authorize` with a program name, a file path, and an `instance_key`.
+   This command now requires a valid administrator `cert.pem` / `key.pem` pair.
 3. The CLI stores:
    - the program hash in the database
    - the ephemeral password for that instance
@@ -130,6 +131,7 @@ Result:
 - the program is recognized by hash and `instance_key`
 - the old password is verified
 - a new password is generated after successful authorization
+- the session password is shown to the administrator
 - the `database/read_only` credential is fetched from the database
 
 ## Main Files

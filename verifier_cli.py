@@ -144,7 +144,11 @@ def authorize_program(program_name: str, program_path: str, instance_key: str):
     conn = None
     try:
         verifier_instance = Verifier(program_path)
-        verifier_instance.require_tls_pair_for_sensitive_operation("authorize_program")
+        if not verifier_instance.verify_tls_pair_if_present():
+            raise Exception(
+                "Administrator identity is required to add a program. "
+                "Provide a valid cert.pem/key.pem pair before using --authorize."
+            )
         new_pass = verifier_instance.generate_random_password(12)
         conn, cursor = verifier_instance.get_db_connection()
         cursor.execute("BEGIN IMMEDIATE")
@@ -208,6 +212,7 @@ def authorize_program(program_name: str, program_path: str, instance_key: str):
             log_or_print(f"[INFO] Created key file: {key_filename}", "INFO")
         except Exception as e:
             log_or_print(f"[ERROR] Could not save key file: {e}", "ERROR")
+        return new_pass
 
     except Exception as e:
         if conn is not None:
@@ -216,6 +221,7 @@ def authorize_program(program_name: str, program_path: str, instance_key: str):
             except Exception:
                 pass
         log_or_print(f"[ERROR] Error in authorize_program: {e}", "ERROR")
+        return None
     finally:
         if conn is not None:
             try:
@@ -627,7 +633,9 @@ def main():
             create_database()
         elif args.authorize:
             prog_name, prog_path, inst_key = args.authorize
-            authorize_program(prog_name, prog_path, inst_key)
+            session_pass = authorize_program(prog_name, prog_path, inst_key)
+            if session_pass is not None:
+                print(f"[SESSION] session_password={session_pass}")
         elif args.list_progs:
             list_programs(show_passwords=args.show_passwords)
         elif args.cleanup_progs:

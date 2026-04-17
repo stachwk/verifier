@@ -32,6 +32,7 @@ W praktyce Verifier jest lekkim mechanizmem: program identity + instance identit
 
 1. Uruchamiasz `--create-db`, aby utworzyć tabele w bazie.
 2. Uruchamiasz `--authorize`, podając nazwę programu, ścieżkę do pliku i `instance_key`.
+   To polecenie wymaga teraz poprawnej pary administratora `cert.pem` / `key.pem`.
 3. CLI zapisuje:
    - hash programu w bazie
    - efemeryczne hasło dla tej instancji
@@ -130,6 +131,7 @@ Wynik:
 - program zostaje rozpoznany po hashu i `instance_key`
 - stare hasło jest sprawdzane
 - po udanej autoryzacji generowane jest nowe hasło
+- hasło sesji jest pokazane administratorowi
 - credential `database/read_only` jest pobierany z bazy
 
 ## Główne pliki
