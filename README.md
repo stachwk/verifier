@@ -226,6 +226,28 @@ Important consequences:
 
 In practice, these three files should be backed up and restored together.
 
+## Backup and Restore
+
+The project includes helper scripts that read paths from `config.ini`:
+
+- `backup_verifier_state_from_config.sh`
+- `restore_verifier_state_from_config.sh`
+
+Usage:
+
+```bash
+./backup_verifier_state_from_config.sh ./config.ini
+./backup_verifier_state_from_config.sh ./config.ini backup
+./restore_verifier_state_from_config.sh ./config.ini backup/verifier_state_YYYYMMDD_HHMMSS
+```
+
+Behavior:
+
+- the backup always includes the full runtime set
+- restore requires the full set to be present in the backup directory
+- relative paths from `config.ini` are resolved against the directory of `config.ini`
+- restored files are normalized to owner-only permissions
+
 ## Authorized Timestamp
 
 The `programs` table stores `authorized_at`.

@@ -224,6 +224,28 @@ Wazne konsekwencje:
 
 W praktyce te trzy pliki powinny byc archiwizowane i odtwarzane razem.
 
+## Backup i restore
+
+Projekt zawiera pomocnicze skrypty, ktore czytaja sciezki z `config.ini`:
+
+- `backup_verifier_state_from_config.sh`
+- `restore_verifier_state_from_config.sh`
+
+Uzycie:
+
+```bash
+./backup_verifier_state_from_config.sh ./config.ini
+./backup_verifier_state_from_config.sh ./config.ini backup
+./restore_verifier_state_from_config.sh ./config.ini backup/verifier_state_YYYYMMDD_HHMMSS
+```
+
+Zachowanie:
+
+- backup zawsze obejmuje caly zestaw runtime
+- restore wymaga obecnosci kompletnego zestawu w katalogu backupu
+- sciezki wzgledne z `config.ini` sa rozwiazywane wzgledem katalogu `config.ini`
+- odtworzone pliki sa normalizowane do uprawnien tylko dla wlasciciela
+
 ## Znacznik czasu autoryzacji
 
 Tabela `programs` przechowuje pole `authorized_at`.
@@ -285,7 +307,7 @@ Projekt zaklada prosta, czytelna obsluge bledow:
 - brak pliku konfiguracyjnego konczy inicjalizacje
 - brak pliku programu oznacza, ze hash nie moze zostac policzony
 - bledny `instance_key` nie zwroci rekordu z bazy
-- zly stary klucz uniemożliwi autoryzacje
+- zly stary klucz uniemozliwi autoryzacje
 - brak credentiala zwroci `None`
 
 W praktyce komunikaty bledow maja od razu wskazac, czy problem dotyczy:
